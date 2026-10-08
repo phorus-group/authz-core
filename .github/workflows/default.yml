@@ -18,14 +18,15 @@ jobs:
     with:
       disable-integration-test: true
       disable-unit-test: true
+      disable-version-validation: ${{ github.event_name != 'release' }}
       disable-publish: ${{ github.event_name != 'release' }}
       build-and-test: true
-      enable-codecov: true
       publish-task: publishToMavenCentral
       metadata-base-url: https://repo1.maven.org/maven2
       metadata-auth-method: none
       registry-username: ${{ vars.MAVEN_CENTRAL_USERNAME }}
-      slack-channel: "C0AM8AEGJG7"
+      slack-releases-channel: "C0AM8AEGJG7"
+      slack-failure-channel: "C0AMP6VM0EB"
       publish-environment: production
       publish-environment-url: https://mvnrepository.com/artifact/group.phorus/authz-core
     secrets:
@@ -33,6 +34,7 @@ jobs:
       signing-key: ${{ secrets.SIGNING_KEY }}
       signing-password: ${{ secrets.SIGNING_PASSWORD }}
       slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
+      codecov-token: ${{ secrets.CODECOV_TOKEN }}
 
   ci-assistant:
     needs: [default-workflow]
