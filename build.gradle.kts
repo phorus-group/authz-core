@@ -13,7 +13,7 @@ plugins {
 }
 
 group = "group.phorus"
-description = "Shared types, permission parsing, and evaluation interfaces for the authz library family."
+description = "Authorization library for Kotlin/JVM services."
 version = "1.0.0"
 
 java {
