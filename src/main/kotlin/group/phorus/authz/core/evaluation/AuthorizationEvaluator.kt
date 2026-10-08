@@ -9,7 +9,7 @@ import group.phorus.authz.core.model.EvaluationContext
  *
  * Each authorization model (RBAC, ReBAC, ABAC, Grants) provides its own implementation
  * of this interface. The [AuthorizationChain] composes them into a sequential evaluation
- * that mirrors the flow described in the product plan:
+ * in this order:
  *
  * ```
  * RBAC → Implicit → ReBAC → ABAC → Grant → Deny
@@ -19,7 +19,7 @@ import group.phorus.authz.core.model.EvaluationContext
  *
  * - Return [AuthZResult.allowed] if this evaluator grants access.
  * - Return [AuthZResult.denied] if this evaluator explicitly denies access (e.g., ABAC constraint).
- * - Return [AuthZResult.abstain] if this evaluator has no opinion and the chain should continue.
+ * - Return [AuthZResult.abstain] to let the chain continue to the next evaluator.
  *
  * Evaluators must **never** throw exceptions for authorization decisions. Exceptions indicate
  * infrastructure failures (DB unreachable, invalid configuration), not access denials.

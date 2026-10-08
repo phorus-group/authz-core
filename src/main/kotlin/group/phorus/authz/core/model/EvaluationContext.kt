@@ -13,8 +13,8 @@ import java.util.UUID
  *
  * ```kotlin
  * val context = EvaluationContext(
- *     userId = UUID.fromString("usr_123"),
- *     privileges = listOf("organization/org_123:manage", "bit:read"),
+ *     userId = UUID.fromString("7f3a9c1e-0b4d-4e26-91a8-2c5f6d0a7b31"),
+ *     privileges = listOf("organization/org_123:manage", "report:read"),
  *     requiredPermission = Permission.parse("organization/org_123/project/proj_456:read"),
  *     attributes = mapOf(
  *         "user.region" to "EU",
@@ -25,7 +25,8 @@ import java.util.UUID
  * ```
  *
  * @property userId The authenticated user's identifier.
- * @property privileges The user's permission strings, typically extracted from the JWT `scope` claim.
+ * @property privileges The permission strings the subject holds, in the
+ *   `<resource-path>:<action>` form [Permission] parses.
  * @property requiredPermission The permission needed to perform the requested action.
  * @property attributes A flat map of contextual attributes for ABAC evaluation. Keys follow the
  *   convention `category.name` (e.g., `"user.region"`, `"resource.tags"`, `"env.time"`).

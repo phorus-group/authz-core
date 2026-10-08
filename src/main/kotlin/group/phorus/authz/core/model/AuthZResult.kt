@@ -11,13 +11,13 @@ import java.util.UUID
  * |----------|---------|
  * | [PolicyDecision.ALLOW] | Access is explicitly granted. |
  * | [PolicyDecision.DENY] | Access is explicitly denied. |
- * | [PolicyDecision.ABSTAIN] | This evaluator has no opinion; defer to the next one in the chain. |
+ * | [PolicyDecision.ABSTAIN] | Defer to the next evaluator in the chain. |
  *
  * @property decision The authorization decision.
  * @property source Which authorization layer produced this result, or `null` if the evaluator abstained.
  * @property matched A human-readable description of what matched (permission string, relationship, policy name).
  * @property grantId The grant identifier, populated when [source] is [AuthZSource.GRANT].
- * @property reason A human-readable explanation, especially useful for denials and audit logging.
+ * @property reason A human-readable explanation of a refusal, which [denied] requires.
  * @see AuthZSource
  * @see PolicyDecision
  */
@@ -34,7 +34,7 @@ data class AuthZResult(
     /** `true` when the decision is [PolicyDecision.DENY]. */
     val denied: Boolean get() = decision == PolicyDecision.DENY
 
-    /** `true` when the evaluator abstained (no opinion). */
+    /** `true` when the decision is [PolicyDecision.ABSTAIN]. */
     val abstained: Boolean get() = decision == PolicyDecision.ABSTAIN
 
     companion object {
@@ -75,8 +75,8 @@ data class AuthZResult(
         )
 
         /**
-         * Creates an [ABSTAIN][PolicyDecision.ABSTAIN] result, indicating this evaluator
-         * has no opinion and the chain should continue to the next evaluator.
+         * Creates an [ABSTAIN][PolicyDecision.ABSTAIN] result, so the chain continues to the
+         * next evaluator.
          */
         fun abstain() = AuthZResult(decision = PolicyDecision.ABSTAIN)
     }
@@ -95,22 +95,22 @@ enum class PolicyDecision {
     /** Access is explicitly denied. */
     DENY,
 
-    /** No opinion; defer to the next evaluator in the chain. */
+    /** Defer to the next evaluator in the chain. */
     ABSTAIN,
 }
 
 /**
  * Identifies which authorization layer produced an [AuthZResult].
  *
- * Recorded in audit logs so that operators can trace exactly *why* a request was allowed or denied.
+ * [AuthZResult.source] carries it, so a caller can record which layer answered a decision.
  *
  * | Source | Layer | Example |
  * |--------|-------|---------|
  * | [IMPLICIT] | Baseline permissions | `user/self:read` granted to every authenticated user |
- * | [RBAC] | Role-Based Access Control | User's `Developer` role includes `bit:read` |
+ * | [RBAC] | Role-Based Access Control | User's `Viewer` role includes `report:read` |
  * | [REBAC] | Relationship-Based Access Control | User is the owner of `organization/org_123` |
  * | [ABAC] | Attribute-Based Access Control | GDPR policy denies non-EU user access to tagged resource |
- * | [GRANT] | JIT Grants | One-time approval grant for `installation/inst_789:approve` |
+ * | [GRANT] | JIT Grants | One-time approval grant for `document/doc_789:approve` |
  */
 enum class AuthZSource {
     /** Baseline permissions granted to every authenticated user. */

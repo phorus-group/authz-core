@@ -1,7 +1,6 @@
 package group.phorus.authz.core.evaluation
 
 import group.phorus.authz.core.model.AuthZResult
-import group.phorus.authz.core.model.AuthZSource
 import group.phorus.authz.core.model.EvaluationContext
 import group.phorus.authz.core.model.PolicyDecision
 
@@ -14,7 +13,7 @@ import group.phorus.authz.core.model.PolicyDecision
  *
  * ### Evaluation flow
  *
- * The default chain implements the authorization flow from the product plan:
+ * The order the [standard] factory composes:
  *
  * ```
  * RBAC → Implicit → ReBAC → ABAC (constraint) → Grant → Deny
@@ -42,7 +41,7 @@ import group.phorus.authz.core.model.PolicyDecision
  * @property grantingEvaluators Evaluators that can grant access (RBAC, Implicit, ReBAC).
  *   Evaluated in order; first ALLOW wins.
  * @property constraintEvaluators Evaluators that can deny access even after a grant (ABAC).
- *   All are evaluated; any DENY overrides the grant.
+ *   Evaluated in order until one answers DENY, and that DENY overrides the grant.
  * @property fallbackEvaluators Evaluators checked only when no granting evaluator allowed (Grant).
  *   Evaluated in order; first ALLOW wins.
  */

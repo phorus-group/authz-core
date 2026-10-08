@@ -66,6 +66,11 @@ class PermissionTest {
         fun `throws on trailing colon`() {
             assertThrows<IllegalArgumentException> { Permission.parse("organization:") }
         }
+
+        @Test
+        fun `throws on leading colon`() {
+            assertThrows<IllegalArgumentException> { Permission.parse(":read") }
+        }
     }
 
     @Nested
@@ -73,36 +78,36 @@ class PermissionTest {
     inner class ActionMatching {
         @Test
         fun `exact action match`() {
-            assertTrue(Permission.parse("bit:read").covers(Permission.parse("bit:read")))
+            assertTrue(Permission.parse("report:read").covers(Permission.parse("report:read")))
         }
 
         @Test
         fun `different actions do not match`() {
-            assertFalse(Permission.parse("bit:read").covers(Permission.parse("bit:update")))
+            assertFalse(Permission.parse("report:read").covers(Permission.parse("report:update")))
         }
 
         @Test
         fun `wildcard action covers any action`() {
-            assertTrue(Permission.parse("bit:*").covers(Permission.parse("bit:read")))
-            assertTrue(Permission.parse("bit:*").covers(Permission.parse("bit:delete")))
-            assertTrue(Permission.parse("bit:*").covers(Permission.parse("bit:manage")))
+            assertTrue(Permission.parse("report:*").covers(Permission.parse("report:read")))
+            assertTrue(Permission.parse("report:*").covers(Permission.parse("report:delete")))
+            assertTrue(Permission.parse("report:*").covers(Permission.parse("report:manage")))
         }
 
         @Test
         fun `manage action covers any action`() {
-            assertTrue(Permission.parse("bit:manage").covers(Permission.parse("bit:read")))
-            assertTrue(Permission.parse("bit:manage").covers(Permission.parse("bit:delete")))
-            assertTrue(Permission.parse("bit:manage").covers(Permission.parse("bit:create")))
+            assertTrue(Permission.parse("report:manage").covers(Permission.parse("report:read")))
+            assertTrue(Permission.parse("report:manage").covers(Permission.parse("report:delete")))
+            assertTrue(Permission.parse("report:manage").covers(Permission.parse("report:create")))
         }
 
         @Test
         fun `regular action does not cover wildcard`() {
-            assertFalse(Permission.parse("bit:read").covers(Permission.parse("bit:*")))
+            assertFalse(Permission.parse("report:read").covers(Permission.parse("report:*")))
         }
 
         @Test
         fun `regular action does not cover manage`() {
-            assertFalse(Permission.parse("bit:read").covers(Permission.parse("bit:manage")))
+            assertFalse(Permission.parse("report:read").covers(Permission.parse("report:manage")))
         }
     }
 
@@ -165,7 +170,7 @@ class PermissionTest {
         fun `grandparent covers grandchild`() {
             assertTrue(
                 Permission.parse("organization/org_123:manage")
-                    .covers(Permission.parse("organization/org_123/project/proj_456/installation/inst_789:read"))
+                    .covers(Permission.parse("organization/org_123/project/proj_456/document/doc_789:read"))
             )
         }
     }
@@ -179,7 +184,7 @@ class PermissionTest {
             assertTrue(superadmin.covers(Permission.parse("organization:create")))
             assertTrue(superadmin.covers(Permission.parse("organization/org_123:read")))
             assertTrue(superadmin.covers(Permission.parse("organization/org_123/project/proj_456:delete")))
-            assertTrue(superadmin.covers(Permission.parse("bit:upload")))
+            assertTrue(superadmin.covers(Permission.parse("document:create")))
         }
     }
 

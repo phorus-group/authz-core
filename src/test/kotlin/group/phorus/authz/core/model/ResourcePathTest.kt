@@ -11,6 +11,63 @@ import kotlin.test.assertTrue
 class ResourcePathTest {
 
     @Nested
+    @DisplayName("Segments")
+    inner class Segments {
+        @Test
+        fun `segment with an id reports an instance`() {
+            val segment = ResourceSegment("organization", "org_123")
+            assertTrue(segment.isInstance)
+            assertFalse(segment.isWildcard)
+            assertFalse(segment.isTypeLevel)
+        }
+
+        @Test
+        fun `segment with a star id reports a wildcard`() {
+            val segment = ResourceSegment("organization", ResourceSegment.WILDCARD)
+            assertTrue(segment.isWildcard)
+            assertFalse(segment.isInstance)
+            assertFalse(segment.isTypeLevel)
+        }
+
+        @Test
+        fun `segment with no id reports type level`() {
+            val segment = ResourceSegment("organization")
+            assertTrue(segment.isTypeLevel)
+            assertFalse(segment.isInstance)
+            assertFalse(segment.isWildcard)
+        }
+
+        @Test
+        fun `star type covers the same instance of any type`() {
+            val anyType = ResourceSegment(ResourceSegment.WILDCARD, "org_123")
+            assertTrue(anyType.covers(ResourceSegment("organization", "org_123")))
+            assertTrue(anyType.covers(ResourceSegment("project", "org_123")))
+        }
+
+        @Test
+        fun `star type with a fixed id does not cover another id`() {
+            val anyType = ResourceSegment(ResourceSegment.WILDCARD, "org_123")
+            assertFalse(anyType.covers(ResourceSegment("organization", "org_456")))
+        }
+
+        @Test
+        fun `instance does not cover the type level of its own type`() {
+            val instance = ResourceSegment("organization", "org_123")
+            assertFalse(instance.covers(ResourceSegment("organization")))
+            assertTrue(ResourceSegment("organization").covers(instance))
+        }
+    }
+
+    @Nested
+    @DisplayName("Construction")
+    inner class Construction {
+        @Test
+        fun `throws on an empty segment list`() {
+            assertThrows<IllegalArgumentException> { ResourcePath(emptyList()) }
+        }
+    }
+
+    @Nested
     @DisplayName("Parsing")
     inner class Parsing {
         @Test
@@ -39,9 +96,9 @@ class ResourcePathTest {
 
         @Test
         fun `parses deeply nested path`() {
-            val path = ResourcePath.parse("organization/org_123/project/proj_456/installation/inst_789")
+            val path = ResourcePath.parse("organization/org_123/project/proj_456/document/doc_789")
             assertEquals(3, path.segments.size)
-            assertEquals(ResourceSegment("installation", "inst_789"), path.leaf)
+            assertEquals(ResourceSegment("document", "doc_789"), path.leaf)
             assertEquals(ResourceSegment("organization", "org_123"), path.root)
         }
 
@@ -87,7 +144,7 @@ class ResourcePathTest {
 
         @Test
         fun `three segments has two ancestors`() {
-            val path = ResourcePath.parse("organization/org_123/project/proj_456/installation/inst_789")
+            val path = ResourcePath.parse("organization/org_123/project/proj_456/document/doc_789")
             val ancestors = path.ancestors().toList()
             assertEquals(2, ancestors.size)
             assertEquals("organization/org_123/project/proj_456", ancestors[0].toString())
@@ -128,7 +185,7 @@ class ResourcePathTest {
         @Test
         fun `different type is not ancestor`() {
             val a = ResourcePath.parse("organization/org_123")
-            val b = ResourcePath.parse("project/proj_456/installation/inst_789")
+            val b = ResourcePath.parse("project/proj_456/document/doc_789")
             assertFalse(a.isAncestorOf(b))
         }
     }

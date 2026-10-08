@@ -14,7 +14,7 @@ package group.phorus.authz.core.model
  * ResourceSegment("project", "*")                 // wildcard instance
  * ```
  *
- * @property type The resource type name, e.g. `"organization"`, `"project"`, `"bit"`.
+ * @property type The resource type name, e.g. `"organization"`, `"project"`, `"report"`.
  * @property instanceId The specific resource identifier, or `null` for type-level,
  *   or `"*"` for wildcard matching.
  */
@@ -99,10 +99,9 @@ data class ResourcePath(
      * Walks up the resource hierarchy, yielding every ancestor path from the direct parent
      * to the root.
      *
-     * For `organization/org_123/project/proj_456/installation/inst_789`, this yields:
+     * For `organization/org_123/project/proj_456/document/doc_789`, this yields:
      * 1. `organization/org_123/project/proj_456`
      * 2. `organization/org_123`
-     * 3. `organization`
      *
      * Useful for checking whether a parent-level permission cascades down to this resource.
      */
