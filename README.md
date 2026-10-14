@@ -219,7 +219,7 @@ with one instance of it. See [Delegated scope](#delegated-scope) for what the cl
 **3. Check a permission against the scope chain the object sits in.**
 
 This step hands the catalogue from step 1 to an `Authorizer`, which runs a scoped-role check against
-it. `Authorizer` holds the catalogue and the `narrowByScope` setting, and nothing belonging to a
+it. `Authorizer` holds the catalogue and the `narrowByScope` setting, both of which outlive a
 request, so one instance serves every request. Build it at startup.
 
 The scope chain is the list of scopes the target object sits inside, outermost first. The caller
@@ -282,8 +282,7 @@ from one into the other changes meaning.
 
 ## How it works
 
-The `permits` call in step 3 took three arguments, and the request itself carried none of them. Each
-one came from somewhere different:
+The `permits` call in step 3 took three arguments, and each one came from somewhere different:
 
 | Argument | Where it comes from |
 |---|---|
@@ -372,14 +371,14 @@ suspend fun createDocument(principal: Principal, projectId: UUID, body: NewDocum
 | `"document:create"` | written here, naming the type being created |
 | `chain` | the parent named in the path, plus the containers that parent records |
 
-The object does not exist, so authority over it is authority over the place it is going. The parent
+The object is still to be created, so authority over it is authority over the place it is going. The parent
 is loaded all the same, because it carries the organization above it, and because a project the
-subject cannot reach is then refused with the same 404 as a project that is not there.
+subject lacks authority over is then refused with the same 404 as a missing project.
 
 ### Listing what sits in a container
 
-The container's id is already in the path, so the chain is one link and nothing has to be loaded
-before the check:
+The container's id is already in the path, so the chain is one link and the check runs straight
+away:
 
 ```kotlin
 // GET /projects/{projectId}/documents
@@ -437,7 +436,7 @@ suspend fun approve(principal: Principal, id: UUID) {
 | `"document:approve"` | written here, the same constant the instance check uses |
 | the chain | every scope the principal holds a role at, so the principal supplies it |
 
-**The pre-filter never grants.** It passes a subject holding the permission somewhere else entirely,
+**The pre-filter only refuses.** It passes a subject holding the permission somewhere else entirely,
 so the instance check still has to run after it. What it saves is the query for a subject who holds
 the permission nowhere.
 
@@ -847,8 +846,8 @@ paths under it.
 
 ### Resource paths
 
-A resource path is the path half of a permission string. Where a service never builds a
-`ResourcePath` of its own, read [Wildcards](#wildcards) below and skip the rest of this section.
+A resource path is the path half of a permission string. Where a service builds its paths only
+through `Permission.parse`, read [Wildcards](#wildcards) below and skip the rest of this section.
 
 #### Segments
 
@@ -1010,8 +1009,7 @@ access was granted.
 ### Writing an evaluator
 
 `AuthorizationEvaluator` requires a `source` property and one `evaluate` function. `evaluate` is a
-`suspend` function, so your evaluator can read storage or call a service without a blocking wrapper
-around it, while `Authorizer.permits` and `PermissionMatcher.covers` stay plain calls on the calling
+`suspend` function, so your evaluator can read storage or call a service directly, while `Authorizer.permits` and `PermissionMatcher.covers` stay plain calls on the calling
 thread.
 
 This one decides from the permission strings the subject holds, which it reads from
