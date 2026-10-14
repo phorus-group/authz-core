@@ -327,6 +327,7 @@ suspend fun approve(principal: Principal, id: UUID) {
     )
 
     if (!authorizer.permits(principal, "document:approve", chain)) {
+        if (authorizer.permits(principal, "document:read", chain)) throw Forbidden()
         throw NotFound("Document $id not found")
     }
 }
@@ -338,8 +339,10 @@ suspend fun approve(principal: Principal, id: UUID) {
 | `"document:approve"` | written here, because approving is what the route does |
 | `chain` | read from the loaded record, which names the project and the organization above it |
 
-**Where the service speaks HTTP, return 404 for the refusal rather than 403.** The check runs once
-the object is loaded. So a 403 here confirms that the id exists.
+**Where the service speaks HTTP, pick the status from what the subject can already see.** The check
+runs once the object is loaded, so a 403 to a subject with no sight of the object confirms that the
+id exists. A subject who may read it already knows, and 403 is the honest answer there, naming the
+one permission they lack. The second check above is how the route tells those two apart.
 
 ### Creating a resource under a parent
 
@@ -358,6 +361,7 @@ suspend fun createDocument(principal: Principal, projectId: UUID, body: NewDocum
     )
 
     if (!authorizer.permits(principal, "document:create", chain)) {
+        if (authorizer.permits(principal, "project:read", chain)) throw Forbidden()
         throw NotFound("Project $projectId not found")
     }
 
@@ -373,7 +377,8 @@ suspend fun createDocument(principal: Principal, projectId: UUID, body: NewDocum
 
 The object is still to be created, so authority over it is authority over the place it is going. The parent
 is loaded all the same, because it carries the organization above it, and because a project the
-subject lacks authority over is then refused with the same 404 as a missing project.
+subject cannot see at all is then refused with the same 404 as a missing project, while a subject
+who may read the project gets a 403 naming the permission they lack.
 
 ### Listing what sits in a container
 
@@ -1206,7 +1211,9 @@ request.
   permission makes `permits` return `false` for it, while a catalogue returning `"*"` for an unknown
   name turns the same omission into open access.
 - **Return 404 where a 403 would confirm an id.** An instance check runs once the object is loaded,
-  so the status code carries information on its own.
+  so the status code carries information on its own. Reserve it for a subject with no sight of the
+  object, since one who may already read it learns nothing from a 403 and is better told which
+  permission they lack.
 - **Set `narrowByScope` from what the `scope` claim carries.** A value in the claim matches the
   requested permission by equality, so turn it on only once the claim carries API scopes. Turned on
   over identity scopes it returns `false` for every check. Left off over API scopes it gives a
