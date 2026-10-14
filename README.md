@@ -4,7 +4,7 @@
 [![Maven Central](https://img.shields.io/maven-central/v/group.phorus/authz-core)](https://mvnrepository.com/artifact/group.phorus/authz-core)
 [![codecov](https://codecov.io/gh/phorus-group/authz-core/branch/main/graph/badge.svg)](https://codecov.io/gh/phorus-group/authz-core)
 
-Authorization library for Kotlin/JVM services. Provides framework-agnostic scoped-role checking,
+Authorization library for Kotlin/JVM services. Provides framework-agnostic scoped RBAC,
 permission-string matching with wildcards and hierarchy inheritance, and a composable evaluator
 chain, so you can decide what a caller may do from state the process already holds.
 

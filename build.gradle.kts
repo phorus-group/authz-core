@@ -13,7 +13,7 @@ plugins {
 }
 
 group = "group.phorus"
-description = "Authorization library for Kotlin/JVM services."
+description = "Scoped RBAC and permission matching for Kotlin/JVM services."
 version = "1.0.0"
 
 java {
