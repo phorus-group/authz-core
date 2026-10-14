@@ -3,13 +3,14 @@ package group.phorus.authz.core.evaluation
 import group.phorus.authz.core.model.RoleName
 
 /**
- * Maps a role name to the permissions that role grants, each written as an action.
+ * Maps a role name to the permissions that role grants.
  *
  * An implementation is static application code: one definition per role for the whole deployment,
  * held in memory and read on every check.
  *
- * An action names a type and a verb, `"report:read"` or `"document:approve"`. The object it applies
- * to comes from the scope chain passed to [Authorizer.permits]. The entry `"*"` grants every action.
+ * A permission names a resource type and an action, `"report:read"` or `"document:approve"`. The
+ * object it applies to comes from the scope chain passed to [Authorizer.permits]. The entry `"*"`
+ * grants everything.
  *
  * ```kotlin
  * object ApplicationRoles : RoleCatalog {
