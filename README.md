@@ -76,14 +76,15 @@ a check takes as arguments.
 
 ### Two ways to carry authority
 
-A **role** is a named set of actions. A **scoped role** is a role held at one **scope**, which is a
+A **role** is a named set of permissions. A **scoped role** is a role held at one **scope**, which is a
 resource type together with one instance of that type, such as the organization `org_123`. With
 scoped roles the subject carries a set of them, where the role name says what the subject is and the
 scope says where it holds that role. The object arrives separately, as the **scope chain**, the list
 of scopes the object sits inside, outermost first. A role held at an outer scope grants at the inner
 ones, so an administrator of `org_123` reaches a document in a project inside it when the chain
-passed for that document names the organization. Here an action is written as a resource type and a
-verb joined by `:`, as in `document:approve`, and the chain is what says which document.
+passed for that document names the organization. Each permission a role grants is written here as an
+**action**, a resource type and a verb joined by `:`, as in `document:approve`, and the chain is
+what says which document.
 
 With **permission strings** the subject carries strings that already name their object, each one a
 **resource path** and an action joined by a colon, as in `organization/org_123:read`. A resource
