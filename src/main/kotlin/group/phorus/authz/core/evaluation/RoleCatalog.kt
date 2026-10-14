@@ -3,7 +3,7 @@ package group.phorus.authz.core.evaluation
 import group.phorus.authz.core.model.RoleName
 
 /**
- * Maps a role name to the set of actions that role grants.
+ * Maps a role name to the permissions that role grants, each written as an action.
  *
  * An implementation is static application code: one definition per role for the whole deployment,
  * held in memory and read on every check.
