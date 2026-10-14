@@ -6,9 +6,9 @@
 
 Authorization library for Kotlin/JVM services. Provides framework-agnostic scoped-role checking,
 permission-string matching with wildcards and hierarchy inheritance, and a composable evaluator
-chain, so you can decide what a caller may do from role definitions written as ordinary Kotlin code.
+chain, so you can decide what a caller may do from state the process already holds.
 
-For the JWT creation and validation that issues the claims a decision is built from, see
+For the JWT creation and validation behind the claims a check reads, see
 [authn-core](https://github.com/phorus-group/authn-core).
 
 ### Notes
@@ -20,7 +20,7 @@ For the JWT creation and validation that issues the claims a decision is built f
 
 ## Table of contents
 
-- [What an authorization check asks](#what-an-authorization-check-asks)
+- [What an authorization check decides](#what-an-authorization-check-decides)
   - [Two ways to carry authority](#two-ways-to-carry-authority)
 - [Getting started](#getting-started)
   - [Installation](#installation)
@@ -57,23 +57,21 @@ For the JWT creation and validation that issues the claims a decision is built f
 
 ***
 
-## What an authorization check asks
+## What an authorization check decides
 
 If you are already familiar with scoped roles and permission strings, feel free to skip to
 [Getting started](#getting-started).
 
-A check asks whether one subject may perform one action on one object.
+A check decides whether one subject may perform one action on one object.
 
 - The **subject** is whoever a check is about, which is usually the user or service account a call
   is being made on behalf of.
-- The **action** is what the subject wants to do, such as `read` or `approve`.
-- The **object** is the one resource the action lands on, named by its type and its id joined by
-  `/`, as in `document/doc_789`.
+- The **action** is the operation the subject wants to perform, such as `read` or `approve`.
+- The **object** is the one resource the action applies to.
 - A **permission** names a resource and an action joined by a colon, as in `document:approve`. The
   two ways below differ in how its resource half names the object, and each section says how.
 
-Each of the two ways below names the object in its own way. Which one a service picks decides what
-a check takes as arguments.
+Which one a service picks decides what a check takes as arguments.
 
 ### Two ways to carry authority
 
@@ -84,7 +82,7 @@ scope says where it holds that role. The object arrives separately, as the **sco
 of scopes the object sits inside, outermost first. A role held at an outer scope grants at the inner
 ones, so an administrator of `org_123` reaches a document in a project inside it when the chain
 passed for that document names the organization. Each permission a role grants names a resource
-type rather than one object, as in `document:approve`, and the chain is what says which document.
+type rather than one object, as in `document:approve`, and the chain names which document.
 
 With **permission strings** the subject carries strings that already name their object, each one a
 **resource path** and an action joined by a colon, as in `organization/org_123:read`. A resource
@@ -92,11 +90,11 @@ path is a chain of types and ids separated by `/`, and it names the object, so t
 the bare verb `read`. What a check requires is another string of the same shape, so the two strings
 are all it compares.
 
-Either one answers on its own, and a service can compose both.
+Either one works on its own, and a service can compose both.
 
 | What differs | Scoped roles | Permission strings |
 |---|---|---|
-| What a check reads | a [`Principal`](#core-types-reference), an action and a scope chain | the permission strings held and the one required |
+| What a check reads | a [`Principal`](#core-types-reference), a permission and a scope chain | the permission strings held and the one required |
 | Where the object is named | the scope chain the caller passes in | inside the permission string itself |
 | What the subject carries | one scoped role per role and scope | one string per object per action |
 | How that set grows | with the number of places it holds a role | with the number of objects reachable |
@@ -109,15 +107,15 @@ Either one answers on its own, and a service can compose both.
 
 - **Scoped roles** fit authority held over a container, such as administrator of an organization or
   approver on a project. The cost is that the scope chain has to be known before the check runs,
-  because the chain is what names where the object sits.
+  because the chain carries where the object sits.
 - **Permission strings** fit authority granted on one named object, such as a share, a one-off grant
   or a relationship recorded against a single resource. The requirement names its own object, so the
-  string is all a check reads. The cost is size. The permission strings a subject holds enumerate the
-  objects it can reach, so hold them in storage the service reads on each check rather than inside a
-  token.
-- **Both together** suits a design that needs both answers. Roles answer whether this kind of member
-  may do this at all. Permission strings answer whether this particular object was shared with this
-  subject. See [the evaluation chain](#the-evaluation-chain) for composing the two answers into one.
+  string is all a check reads. The cost is the number of strings a subject carries, which grows with
+  the objects they enumerate, so hold them in storage the service reads on each check rather than
+  inside a token.
+- **Both together** suits a design that needs both. A role reaches everything inside the scopes it
+  is held at, and a permission string records authority over one named object. See
+  [the evaluation chain](#the-evaluation-chain) for composing the two into one decision.
 
 ## Getting started
 
@@ -128,18 +126,18 @@ Make sure that `mavenCentral` (or any of its mirrors) is added to the repository
 Binaries and dependency information for Maven and Gradle can be found at [http://search.maven.org](https://search.maven.org/search?q=g:group.phorus%20AND%20a:authz-core).
 
 <details open>
-<summary>Gradle / Kotlin DSL</summary>
-
-```kotlin
-implementation("group.phorus:authz-core:x.y.z")
-```
-</details>
-
-<details open>
 <summary>Gradle</summary>
 
 ```groovy
 implementation 'group.phorus:authz-core:x.y.z'
+```
+</details>
+
+<details open>
+<summary>Gradle / Kotlin DSL</summary>
+
+```kotlin
+implementation("group.phorus:authz-core:x.y.z")
 ```
 </details>
 
@@ -155,79 +153,55 @@ implementation 'group.phorus:authz-core:x.y.z'
 ```
 </details>
 
-The library requires only the Kotlin standard library, and compiles against Java 17.
-
 ### Quick start
 
 Steps 1 to 3 get a scoped-role check running in your service, and you need three things: role
 definitions, a principal, and the scope chain the target object sits in. Step 4 is the
-permission-string model, which answers on its own and needs none of the three.
+permission-string model, which works on the permission strings alone.
 
-**1. Declare the roles and the actions each one grants.**
+**1. Declare the roles and the permissions each one grants.**
 
-A **role catalogue** maps a role name to the actions that role grants. A `RoleCatalog` implementation
-is static application code: one definition per role for the whole deployment, held in memory and
-read on every check.
+A **role catalogue** maps a role name to the permissions that role grants. `InMemoryRoleCatalog`
+reads a map you hand it, which is one definition per role for the whole deployment.
 
 ```kotlin
-import group.phorus.authz.core.evaluation.RoleCatalog
+import group.phorus.authz.core.evaluation.InMemoryRoleCatalog
 import group.phorus.authz.core.model.RoleName
 
-object ApplicationRoles : RoleCatalog {
-
-    private val definitions = mapOf(
-        RoleName("OWNER") to setOf("*"),   // every action
+val applicationRoles = InMemoryRoleCatalog(
+    mapOf(
+        RoleName("OWNER") to setOf("*"),   // everything
         RoleName("ADMIN") to setOf("project:manage", "report:manage", "document:approve"),
         RoleName("APPROVER") to setOf("document:approve", "document:read"),
         RoleName("VIEWER") to setOf("report:read", "project:read", "document:read"),
-    )
-
-    override fun permissions(role: RoleName): Set<String> = definitions[role].orEmpty()
-}
+    ),
+)
 ```
 
-`Authorizer` is what answers a scoped-role check. It compares a catalogue permission to the requested
-action as one whole string, so the two match only when they are equal, and the colon in
-`document:approve` is convention here. A name of your own works as well as these. The action `"*"`
-is the one exception, and a role whose set holds it grants every action. The action `project:*`
-grants nothing unless a check requests the literal action `project:*`, because it is compared whole
-like any other action. See [Wildcards](#wildcards) for what `*` means in each place it appears.
-
-Whole comparison bounds what one action grants. `report:manage` in this catalogue is the action
-`report:manage`, so a subject whose only role is `ADMIN` is refused a `report:read` check, and a
-role that grants both lists both.
-
-**`manage` is matched differently in the two models, and both lines below are true.**
-
-```kotlin
-// principal and chain are the ones built in steps 2 and 3
-authorizer.permits(principal, "report:read", chain)   // false, ADMIN holds report:manage
-PermissionMatcher.covers(granted = "report:manage", required = "report:read")   // true
-```
-
-A catalogue permission is compared whole, so `manage` there grants the action spelled `report:manage`
-and nothing else. In a permission string `manage` covers every action on that path and on the paths
-under it, which [Standard actions](#standard-actions) states on the other side of this asymmetry. A
-string copied from one model into the other changes meaning.
+A catalogue permission is compared as a whole string, so two match only when they are equal, and the
+colon in `document:approve` is convention here. A name of your own works as well as these. The entry
+`"*"` is the one exception, and a role whose set holds it grants everything. The entry `project:*`
+grants nothing unless a check requests the literal permission `project:*`, because it is compared
+whole like any other. See [Wildcards](#wildcards) for what `*` means in each place it appears.
 
 **2. Build a principal for the subject the request acts for.**
 
 A `Principal` belongs to one request. Build one per request, from that request's claims, since one
-held past its request answers every later check from the first request's subject.
+held past its request leaves every later check reading the first request's subject.
 
-Each role is keyed by the scope it is held at. So one principal can hold several roles in a single
-organization, and roles in several organizations at once. See [Scoped roles](#scoped-roles) for
-building the same map from a token's `roles` claim.
+Each role is keyed by the scope it is held at. So one principal can hold several roles at one scope,
+and roles at several scopes at once. See [Scoped roles](#scoped-roles) for building the same map
+from a token's `roles` claim.
 
 ```kotlin
 import group.phorus.authz.core.model.Principal
 import group.phorus.authz.core.model.Scope
 
 val principal = Principal(
-    subjectId = subjectId,          // a java.util.UUID off this request's claims
+    subjectId = subjectId,          // a java.util.UUID from this request's claims
     roles = mapOf(
-        Scope("organization", organizationId.toString()) to setOf(RoleName("ADMIN")),
-        Scope("project", projectId.toString()) to setOf(RoleName("APPROVER")),
+        Scope("organization", "org_123") to setOf(RoleName("ADMIN")),
+        Scope("project", "proj_456") to setOf(RoleName("APPROVER")),
     ),
 )
 ```
@@ -237,33 +211,36 @@ strings and defaults to an empty list. `Authorizer` reads it only when construct
 `narrowByScope = true`. The `Scope` type keying the roles map is a different type, a resource type
 with one instance of it. See [Delegated scope](#delegated-scope) for what the claim does.
 
-**3. Check an action against the scope chain the object sits in.**
+**3. Check a permission against the scope chain the object sits in.**
 
-`Authorizer` holds the catalogue and nothing else, so one instance serves every request. Build it at
-startup.
+This step hands the catalogue from step 1 to an `Authorizer`, which runs a scoped-role check against
+it. `Authorizer` holds the catalogue and the `narrowByScope` setting, and nothing belonging to a
+request, so one instance serves every request. Build it at startup.
 
 The scope chain is the list of scopes the target object sits inside, outermost first. The caller
 builds it, and `permits` tries each link on its own, so the order is for the reader rather than for
-the library. Where the stored record names the containers an object sits in, read the chain off that
-record, as the snippet below does with a loaded `document`.
+the library.
 
 ```kotlin
 import group.phorus.authz.core.evaluation.Authorizer
 
-val authorizer = Authorizer(ApplicationRoles)
+val authorizer = Authorizer(applicationRoles)
 
 val chain = listOf(
-    Scope("organization", document.project.organization.id.toString()),
-    Scope("project", document.project.id.toString()),
+    Scope("organization", "org_123"),
+    Scope("project", "proj_456"),
 )
 
 authorizer.permits(principal, "document:approve", chain)   // true
 ```
 
+Where the stored record names the containers an object sits in, read the chain from that record,
+which [instance checks once the object is loaded](#instance-checks-once-the-object-is-loaded) shows.
+
 **4. Match permission strings where authority was granted on one named object.**
 
-A permission string is a resource path and an action joined by `:`. `covers` answers whether the
-permission a subject was granted is broad enough for the one a check requires.
+A permission string is a resource path and an action joined by `:`. `covers` returns `true` when
+the permission a subject was granted is broad enough for the one a check requires.
 
 ```kotlin
 import group.phorus.authz.core.evaluation.PermissionMatcher
@@ -277,23 +254,35 @@ PermissionMatcher.covers(
 **What you get:**
 
 - **From `permits`**: `true` here. The `ADMIN` role above is held at the organization, the chain
-  reaches inside it, and `document:approve` is in that role's set.
+  names that organization, and `document:approve` is in that role's set.
 - **From `covers`**: `true` when the granted path covers the required path and the granted action
   covers the required action. `manage` on the organization covers `read` on a project inside it, as
   described in [Standard actions](#standard-actions) and
   [Hierarchy inheritance](#hierarchy-inheritance).
-- **In both cases**: the decision comes off a map in memory and a string comparison, so a check does
-  no I/O, needs no coroutine, and finishes on the calling thread from state the process already
-  holds.
+- **In both cases**: the decision comes from state the process already holds, so both are plain
+  functions that return on the calling thread and do no I/O.
+
+**`manage` is matched differently by the two, and both lines below hold**, using the `principal`
+from step 2 and the `authorizer` and `chain` from step 3.
+
+```kotlin
+authorizer.permits(principal, "report:read", chain)   // false, ADMIN holds report:manage
+PermissionMatcher.covers(granted = "report:manage", required = "report:read")   // true
+```
+
+A catalogue permission is compared whole, so `manage` there grants the permission spelled
+`report:manage` and nothing else. In a permission string `manage` covers every action on that path
+and on the paths under it, which [Standard actions](#standard-actions) sets out. A string copied
+from one into the other changes meaning.
 
 ## Core concepts
 
 ### Scoped roles
 
 A role name says what the subject is. A [`Scope`](#core-types-reference) says where the subject is
-that thing. The two together are one scoped role, which Azure RBAC and GCP IAM call a role
-assignment. A role definition carries actions alone, a scoped role adds the scope, and a `Principal`
-holds those scoped roles for one subject. That is the same split those two products use.
+that thing. The two together are one scoped role, which Azure RBAC calls a role assignment and GCP
+IAM a role binding. A role definition carries permissions alone, a scoped role adds the scope, and a
+`Principal` holds those scoped roles for one subject.
 
 ```kotlin
 RoleName("ADMIN")                  // what
@@ -310,11 +299,12 @@ Scope.parseOrNull("organization:a:b")         // Scope("organization", "a:b")
 ```
 
 A **role entry** is one value of the `roles` claim, which a service reads into a role name and the
-`Scope` it is held at. Whatever issued the claim picks its shape, under
+`Scope` it is held at. The issuer of the claim decides its shape, under
 [RFC 7643 §4.1.2](https://datatracker.ietf.org/doc/html/rfc7643#section-4.1.2), which defines `roles`
 and specifies no vocabulary or syntax for its values. These two shapes are the ones this library
 documents, with the raw entry on the left and what a service reads it as on the right. An entry
-naming no scope is held at the [platform scope](#the-platform-scope):
+naming no scope is held at `Scope.PLATFORM`, which is `Scope("platform", "*")` and is consulted on
+every check:
 
 ```
 ADMIN@organization:org_123     RoleName("ADMIN") at Scope("organization", "org_123")
@@ -324,8 +314,8 @@ OWNER                          RoleName("OWNER") at Scope.PLATFORM
 `Scope.parseOrNull` reads the scope half of such an entry. Splitting the entry at `@` is the
 service's own step, as the snippet below does.
 
-**A role entry arrives from outside the process, even when it arrives signed.** A signature names
-which issuer sent a value, not that the value is well formed. So `parseOrNull` answers `null` for a
+**A role entry arrives from outside the process, even when it arrives signed.** A signature
+identifies the issuer, and leaves the value's shape unchecked. So `parseOrNull` returns `null` for a
 value that is not `type:id`:
 
 ```kotlin
@@ -335,9 +325,10 @@ Scope.parseOrNull("organization:")   // null, blank id
 Scope.parseOrNull("")                // null
 ```
 
-Call it from `mapNotNull` in your own per-request step that builds the principal, and it skips a
-malformed entry and keeps the rest. The subject holds the roles that parsed, so a check needing a
-skipped role answers `false` in the ordinary way. Log the entry that was skipped.
+Given `rolesClaim` and `scopeClaim` read from the validated token as `List<String>`, call
+`parseOrNull` from `mapNotNull` in your own per-request step that builds the principal, and it skips
+a malformed entry and keeps the rest. The subject holds the roles that parsed, so a check needing a
+skipped role returns `false`. Log the entry that was skipped.
 
 ```kotlin
 val roles: Map<Scope, Set<RoleName>> = rolesClaim
@@ -354,53 +345,77 @@ val roles: Map<Scope, Set<RoleName>> = rolesClaim
 val principal = Principal(
     subjectId = subjectId,
     roles = roles,
-    scope = scopeClaim,             // the scope claim, as a List<String>
+    scope = scopeClaim,
 )
 ```
 
 #### The role catalogue
 
-`RoleCatalog` has one method, and a service implements it:
+`InMemoryRoleCatalog` reads a map, which covers a deployment whose role definitions live in
+its own source. Behind it is `RoleCatalog`, a one-method interface, so a service that keeps
+definitions elsewhere writes its own:
 
 ```kotlin
-fun permissions(role: RoleName): Set<String>
+interface RoleCatalog {
+    fun permissions(role: RoleName): Set<String>
+}
 ```
 
 The strings in the set are permissions naming a resource type, and `Authorizer` compares each one to
 the requested permission whole. The entry `"*"` is the exception, and it grants everything. A
-catalogue holds type-level permissions where `PermissionMatcher` reads ones that name an instance,
-so a string belongs to the way it was written for.
+catalogue permission names a resource type by convention, while a permission string names an
+instance, so each string belongs to the model it was written for.
 
-| What the catalogue answers for a name | What a subject holding that role may do |
+**Where definitions live in storage, read them once and keep the result.** The method is
+synchronous, so reading storage inside it means blocking, which puts a round trip in front of
+every authorization. Load at startup, build a catalogue from what you read, and when the
+definitions change build another and swap the reference, so each check reads a complete snapshot:
+
+```kotlin
+@Volatile
+private var catalog: RoleCatalog = InMemoryRoleCatalog(loadDefinitions())
+
+fun onDefinitionsChanged() {
+    catalog = InMemoryRoleCatalog(loadDefinitions())
+}
+```
+
+A subject's own roles are a separate matter, and those are read per request into a
+[`Principal`](#core-types-reference). Swapping the catalogue changes what a role means, not who
+holds it.
+
+| What the catalogue returns for a name | What a subject holding that role may do |
 |---|---|
-| `setOf("report:read", "project:read")` | exactly those two actions |
-| `setOf("*")` | every action |
+| `setOf("report:read", "project:read")` | exactly those two permissions |
+| `setOf("*")` | every permission |
 | the empty set | nothing |
 
-**Answer the empty set for an unknown name.** `Authorizer` asks the catalogue about the names a
-principal holds at the scopes being checked, and those names arrived from outside the process, so it
-is asked about unknown, misspelled and withdrawn names too. The `orEmpty()` in the quick start
-answers the empty set, and the empty set grants no action, which is what makes such a name safe.
+**Return the empty set for an unknown name.** `Authorizer` reads the catalogue for the names a
+principal holds at the scopes being checked, and those names arrived from outside the process, so
+unknown, misspelled and withdrawn names reach it too. `InMemoryRoleCatalog` returns the empty set
+for a name it holds no definition for, and the empty set grants nothing, so such a name is safe. A
+catalogue of your own has to return the same.
 
 By convention a catalogue permission names a type and a verb, as `document:approve` does, and a
-permission string's action is the bare verb instead. The action names the type and the scope chain
-names the object, so one definition serves every organization. The bridge in
+permission string's action is the bare verb instead. The catalogue permission names the type and the
+scope chain names the object, so one definition serves every organization.
 [Writing an evaluator](#writing-an-evaluator) builds a catalogue permission in that spelling, so an
-evaluator answering from both models depends on it.
+evaluator that reads both models depends on it.
 
 **Role inheritance, where a senior role absorbs a junior one, belongs inside your catalogue.** The
-set `permissions` answers is flat and `Authorizer` reads it as it comes. So compute the transitive
-closure once at startup and answer the union: `ADMIN` absorbing `APPROVER` means the `ADMIN` name
-answers its own actions and `APPROVER`'s together. Role inheritance is hierarchical RBAC,
+set `permissions` returns is flat and `Authorizer` reads it as it comes. So compute the transitive
+closure once at startup and return the union, and a catalogue where `ADMIN` absorbs `APPROVER`
+returns both sets of permissions under the `ADMIN` name. Role inheritance is hierarchical RBAC,
 standardised in ANSI INCITS 359-2004, and it is a separate mechanism from the
 [hierarchy inheritance](#hierarchy-inheritance) between resource paths.
 
 #### The scope chain
 
 `Authorizer.permits` takes the scope chain the target object sits in, outermost first. A role grants
-the action when its catalogue set holds that action and the role is held at any link of the chain,
-so an organization administrator reaches every project inside the organization through that one
-role. Where the subject holds several roles, any one of them granting the action is enough.
+the requested permission when its catalogue set holds that permission or `"*"`, and the role is held
+at any link of the chain, so an organization administrator reaches every project inside the
+organization through that one role. Where the subject holds several roles, any one of them granting
+it is enough. Taking a `document:approve` check against the step 1 catalogue:
 
 | Roles held | Chain passed | Result |
 |---|---|---|
@@ -412,15 +427,14 @@ role. Where the subject holds several roles, any one of them granting the action
 | `OWNER` at [`Scope.PLATFORM`](#the-platform-scope) | `[organization:o1]` | granted, the platform scope is consulted on every call |
 
 **You pass the chain, because it is the only hierarchy a scoped-role check carries.** So a request
-can carry the object's id alone. The service loads the object, reads the containers off the stored
+can carry the object's id alone. The service loads the object, reads the containers from the stored
 record, and passes those as the chain. See
 [instance checks once the object is loaded](#instance-checks-once-the-object-is-loaded) for that code.
 
 #### The platform scope
 
 `Scope.PLATFORM` is `Scope("platform", "*")`, where the `*` is a literal id, and `Authorizer`
-consults it on every call, whatever the chain holds. So a role held there grants everywhere,
-including when the chain is empty.
+consults it on every call, whatever the chain holds. So a role held there grants everywhere.
 
 ```kotlin
 val operator = Principal(
@@ -436,45 +450,45 @@ With an empty chain, a role held at `Scope.PLATFORM` is the only one consulted.
 #### Delegated scope
 
 A token can be issued to an application acting for the subject, and the `scope` claim records how
-much of the subject's authority that application was consented to use. `Principal.scope` holds the
-claim as it arrived, which
+much of the subject's authority that application was granted consent to use. `Principal.scope` holds
+the claim as it arrived, which
 [RFC 6749 §3.3](https://datatracker.ietf.org/doc/html/rfc6749#section-3.3) defines as the authority
 delegated to the client application. It is a list of strings. The `Scope` type above is its own
 type: a resource type with one instance of it.
 
 `Authorizer` reads the claim when you construct it with `narrowByScope = true`, and it then applies
 as a second condition alongside the roles. Effective authority becomes the intersection of what the
-subject holds and what the application was consented to do. The default is `false`.
+subject holds and what the application was granted consent to do. The default is `false`, which is
+what the `authorizer` from step 3 took.
 
 ```kotlin
-val authorizer = Authorizer(ApplicationRoles)                          // roles decide alone
-val narrowing  = Authorizer(ApplicationRoles, narrowByScope = true)    // scope narrows them
+val narrowing = Authorizer(applicationRoles, narrowByScope = true)   // scope narrows the roles
 ```
 
 **Which setting to use depends on what the `scope` claim carries.** The claim carries two unrelated
 kinds of value. OpenID Connect identity scopes such as `openid profile email` grant access to
-identity claims. API scopes name actions, as in `scope: "report:read document:approve"`. The list
-reads the same either way, so the setting is what states which kind the claim holds:
+identity claims. API scopes name permissions, as in `scope: "report:read document:approve"`. The
+list reads the same either way, so the setting states which kind the claim holds:
 
 - **Leave it off** where the `scope` claim carries identity scopes or nothing. This is the default,
-  and it is the answer for a first-party client.
+  and it fits a first-party client.
 - **Turn it on** once the authorization server issues API scopes drawn from the same vocabulary as
   the `RoleCatalog`. From then on a check grants only what the subject's roles and the delegated set
   both allow.
 
-A value in the claim matches an action by equality, so the claim has to carry the action itself and
-it carries no wildcard. An issuer of API scopes lists every action a client may perform, and
-`listOf("*")` in the claim matches the action `"*"` alone, where `setOf("*")` in a catalogue grants
-every action. Take `permits(principal, "report:manage", chain)` where the subject's roles already
-grant `report:manage`:
+A value in the claim matches the requested permission by equality, so the claim has to carry the
+permission itself. An issuer of API scopes lists every permission a client may exercise, and
+`listOf("*")` in the claim matches the permission `"*"` alone, while `setOf("*")` in a catalogue
+grants every permission. Take `permits(principal, "report:manage", chain)` where the subject's roles
+already grant `report:manage`:
 
 | What `Principal.scope` holds | `narrowByScope = false` | `narrowByScope = true` |
 |---|---|---|
-| `emptyList()` | granted | refused, the claim lists no action |
-| `listOf("openid", "profile", "email")` | granted | refused, the claim lists no action |
-| `listOf("report:manage", "report:read")` | granted | granted, the action is listed |
-| `listOf("report:read")` | granted | refused, the action is outside the delegated set |
-| `listOf("*")` | granted | refused, `"*"` matches the action `"*"` alone |
+| `emptyList()` | granted | refused, the claim lists no permission |
+| `listOf("openid", "profile", "email")` | granted | refused, the claim lists no permission |
+| `listOf("report:manage", "report:read")` | granted | granted, the permission is listed |
+| `listOf("report:read")` | granted | refused, the permission is outside the delegated set |
+| `listOf("*")` | granted | refused, `"*"` matches the permission `"*"` alone |
 
 ### Permission strings
 
@@ -484,7 +498,7 @@ A permission string is `<resource-path>:<action>`.
 
 ```
 organization/org_123:read                       one organization, one action
-organization/org_123/project/proj_456:manage    one project, every action on it
+organization/org_123/project/proj_456:manage    one project, every action on it and under it
 report:create                                   the report type, so every report, one action
 *:*                                             any path, any action
 ```
@@ -494,21 +508,21 @@ belongs to the resource path. `Permission.parse` reads that form, and it throws
 `IllegalArgumentException` for a blank string, for one with no `:`, and for one whose last `:` sits at
 either end. Where a string reached the process from outside, catch it.
 
-`Permission` has no non-throwing reader, so that exception is how a malformed string arrives.
-`anyCovers` and `findMatch`, the two [matcher](#matching-rules) calls that search a list of
+`Permission.parse` is the only reader and it throws, so that exception is how a malformed string
+arrives. `anyCovers` and `findMatch`, the two [matcher](#matching-rules) calls that search a list of
 permission strings the subject holds, parse those strings in list order and stop at the first one
 that covers. So a malformed entry ahead of the match throws from the matcher call, and one behind it
-is never read. Validate held strings where they enter the process. `Scope.parseOrNull` answers
+is never read. Validate held strings where they enter the process. `Scope.parseOrNull` returns
 `null` and the caller skips the entry, while `Permission.parse` throws, so each model needs its own
 guard at the boundary.
 
 A catalogue permission, a permission string and a `Scope` all read alike, and the colon does a different
-job in each. `report:read` in your catalogue is one action, and `Authorizer` compares it to the
+job in each. `report:read` in your catalogue is one permission, and `Authorizer` compares it to the
 requested permission whole, so the colon there is convention. `report:read` as a permission string is
 the resource path `report` and the action `read`, and `covers` compares the two halves separately.
 `organization:org_123` as a `Scope` is a resource type and one instance id. `Scope.parseOrNull`
 splits at the first colon and `Permission.parse` at the last, so `organization:a:b` is the id `a:b`
-to one and the action `b` to the other. Each value is read by the call of the model it came from.
+to one and the action `b` to the other. Each value is read by the call belonging to its own model.
 
 #### Standard actions
 
@@ -527,9 +541,9 @@ the names the library documents.
 | `*` | any action | covers every required action on a path it covers |
 
 **`manage` and `*` carry that behaviour in a permission string only.** A `RoleCatalog` set holds
-actions compared whole, so `report:manage` in a catalogue grants the action `report:manage` and
-refuses a `report:read` check, while `PermissionMatcher.covers("report:manage", "report:read")`
-answers `true`. Step 1 of the [quick start](#quick-start) shows both answers side by side.
+permissions compared whole, so `report:manage` in a catalogue grants the permission `report:manage`
+and refuses a `report:read` check, while `PermissionMatcher.covers("report:manage", "report:read")`
+returns `true`. The [quick start](#quick-start) shows both lines side by side after step 4.
 
 #### Matching rules
 
@@ -567,9 +581,9 @@ on the resource hierarchies of GCP IAM and Azure RBAC:
 
 ```
 organization/org_123:manage
-  covers  organization/org_123/project/proj_456:read                              yes
-  covers  organization/org_123/project/proj_456:manage                            yes
-  covers  organization/org_123/project/proj_456/document/doc_789:approve          yes
+  covers  organization/org_123/project/proj_456:read
+  covers  organization/org_123/project/proj_456:manage
+  covers  organization/org_123/project/proj_456/document/doc_789:approve
 ```
 
 Inheritance applies to every action, so `organization/org_123:read` covers
@@ -578,8 +592,8 @@ paths under it.
 
 ### Resource paths
 
-A resource path is the path half of a permission string. If you only call `PermissionMatcher`, feel
-free to skip to [the evaluation chain](#the-evaluation-chain).
+A resource path is the path half of a permission string. Where a service never builds a
+`ResourcePath` of its own, read [Wildcards](#wildcards) below and skip the rest of this section.
 
 #### Segments
 
@@ -587,7 +601,7 @@ A `ResourcePath` is an ordered list of `ResourceSegment`s, each one a type with 
 id, and a raw path writes them separated by `/`. A `ResourceSegment` pairs a type with an instance
 id as a `Scope` does, and writes it `organization/org_123` where a `Scope` writes
 `organization:org_123`. The two belong to different ways of carrying authority: a segment is part of
-a resource path, where a `Scope` keys a role and sits in a scope chain.
+a resource path, while a `Scope` keys a role and sits in a scope chain.
 
 **How `parse` reads a raw path:** it splits on `/` and pairs the tokens. Tokens at even indices
 become types, and tokens at odd indices become the instance id of the type before them. So the four
@@ -617,15 +631,13 @@ type-level segment both cover any instance of the type.
 | `ResourceSegment("organization", "*")` | any organization | false | true | false |
 | `ResourceSegment("organization")` | any organization | false | false | true |
 
-A `*` instance id is written into the string. A type-level segment is what `parse` leaves for a type
-token standing alone. `covers` reads the two the same way, so either spelling works in a stored
-permission string.
-
-A `*` in the type position covers any type.
+A `*` instance id is written into the string. `parse` leaves a type-level segment for a type token
+standing alone. `covers` reads the two the same way, so either spelling works in a stored
+permission string, and a `*` in the type position covers any type.
 
 #### Ancestors
 
-`ancestors()` answers a `Sequence`, walking up the hierarchy and yielding one path per segment above
+`ancestors()` returns a `Sequence`, walking up the hierarchy and yielding one path per segment above
 the leaf. It starts at the direct parent and ends at the path holding the root segment alone. A
 single-segment path yields an empty sequence. Walk it to look for a grant recorded on a container
 above the object.
@@ -637,8 +649,8 @@ path.ancestors().toList()
 // [organization/org_123/project/proj_456, organization/org_123]
 ```
 
-`isAncestorOf` asks the same question between two paths you already hold. A path is never its own
-ancestor:
+`isAncestorOf` returns `true` when one path you already hold sits above another. A path is never
+its own ancestor:
 
 ```kotlin
 val organization = ResourcePath.parse("organization/org_123")
@@ -660,32 +672,31 @@ appears, so a string carrying one changes meaning when it is copied between a `R
 | the instance in a path, as `organization/*:read` | any instance of that type |
 | the type in a path, as `*:read` | any type |
 | the action, as `report:*` | any action on a path it covers |
-| a `RoleCatalog` set, as `setOf("*")` | every action |
-| an action inside a `RoleCatalog` set, as `project:*` | the action written `project:*`, compared whole |
-| the `scope` claim, as `listOf("*")` | the action `"*"` alone |
-| `Scope.PLATFORM`, which is `Scope("platform", "*")` | the id of that one scope, matched as it reads |
+| a `RoleCatalog` set, as `setOf("*")` | every permission |
+| a permission inside a `RoleCatalog` set, as `project:*` | the permission written `project:*`, compared whole |
+| the `scope` claim, as `listOf("*")` | the permission `"*"` alone |
+| `Scope.PLATFORM`, which is `Scope("platform", "*")` | a literal id, compared by equality like any other |
 
 ```kotlin
 ResourcePath.parse("organization/*").covers(ResourcePath.parse("organization/org_123"))   // true
 ResourceSegment("*", "proj_456").covers(ResourceSegment("project", "proj_456"))           // true
 ```
 
-`covers` asks the same question at three levels. `PermissionMatcher` compares two permissions,
+`covers` works at three levels. `PermissionMatcher` compares two permissions,
 `ResourcePath.covers` compares two paths, and `ResourceSegment.covers` compares two segments.
 
 ## The evaluation chain
 
 ### What the chain is for
 
-`Authorizer` and `PermissionMatcher` each answer from one source. Once your service decides from
-several sources at once, you need an order between them and a rule for what beats what.
+`Authorizer` and `PermissionMatcher` each read one source. Once your service decides from
+several sources at once, you need an order between them and a rule for which decision wins.
 `AuthorizationEvaluator` and `AuthorizationChain` supply both. The library ships the interface and the
 composition, and you write one evaluator per source of authority.
 
 The chain in this section holds evaluators. The scope chain a `permits` call takes holds scopes.
 
-Each evaluator names the source it answers from, as an `AuthZSource`, and that name travels on the
-result:
+Each evaluator names the source it reads, as an `AuthZSource`, and the result carries that name:
 
 | `AuthZSource` | Stands for | What the evaluator reads | Example |
 |---|---|---|---|
@@ -695,18 +706,19 @@ result:
 | `ABAC` | attribute-based access control | attributes of the subject, the object or the moment | a policy refusing a subject outside the EU on a resource tagged `gdpr` |
 | `GRANT` | a grant issued on demand for one object | a grant record | a one-time approval of `document/doc_789:approve` |
 
-These five names are the vocabulary an audit record reads back, and an evaluator of your own picks
-whichever one describes where its answer came from. The library reads an instance id as opaque, so
-`self` in `user/self:read` is a path a service writes from the subject's own id.
+These five names are what `AuthZResult.source` carries into an audit record, and an evaluator of
+your own picks whichever one describes where its decision came from. The library reads an instance
+id as opaque, so `self` in `user/self:read` is an instance id a service writes from the subject's
+own id.
 
 ### The three decisions
 
-An evaluator answers with a `PolicyDecision`, which `AuthZResult.decision` carries:
+An evaluator picks a `PolicyDecision`, which `AuthZResult.decision` carries:
 
 | Decision | What it means |
 |---|---|
 | `ALLOW` | this source grants access |
-| `DENY` | this source refuses access, and the refusal stands over any `ALLOW` |
+| `DENY` | this source refuses access, and the chain returns that refusal |
 | `ABSTAIN` | this source has nothing to say, so the chain carries on |
 
 `AuthZResult` has one factory per decision, and one property reads each decision back:
@@ -719,47 +731,37 @@ An evaluator answers with a `PolicyDecision`, which `AuthZResult.decision` carri
 
 `matched` holds what granted access or what triggered the refusal, as a permission string, a
 catalogue permission, a relationship or a policy name. `grantId` is a `UUID` and it is filled where
-`source` is `GRANT`, so a grant-based allow names the record it came from. `reason` carries the text
-an audit record of a refusal reads. `source`, `matched`, `grantId` and `reason` are each nullable,
-so one log line records whatever grounds the deciding evaluator supplied, and the chain's own
-default `DENY` carries a reason alone.
+`source` is `GRANT`, so a grant-based allow names the record it came from. `reason` carries the
+refusal text for an audit record. `source`, `matched`, `grantId` and `reason` are each nullable, so
+one log line records the grounds the deciding evaluator supplied, and the chain's own default `DENY`
+carries a reason alone.
 
 ### Phases and precedence
 
-`AuthorizationChain` holds three lists of evaluators, one per phase. The block below is the route a
-check takes through them, and the table after it carries the rule each phase runs under:
-
-```
-phase        what ends the phase           what happens then
-granting     the first ALLOW or DENY       an ALLOW -> constraint, a DENY returns
-             every evaluator abstained     -> fallback
-constraint   the first DENY                that DENY returns instead of the ALLOW
-             no DENY                       the ALLOW returns
-fallback     the first ALLOW or DENY       an ALLOW -> constraint, a DENY returns
-             every evaluator abstained     the default DENY returns
-```
+`AuthorizationChain` holds three lists of evaluators, one per phase, and each phase runs under its
+own rule:
 
 | Phase | What its evaluators are for | The rule it runs under |
 |---|---|---|
-| Granting | sources that confer authority | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase next and a `DENY` returning on the spot |
-| Constraint | cross-cutting policies that restrict | they run in order until one answers `DENY`, that `DENY` replaces the `ALLOW`, and the rest never run |
-| Fallback | sources consulted when the granting phase abstained | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase for the first time and a `DENY` returning on the spot |
-| Default | the granting and fallback phases both abstained throughout | `DENY`, naming the required permission |
+| Granting | sources that confer authority | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase next and a `DENY` returning at once |
+| Constraint | cross-cutting policies that restrict | they run in order until one returns a `DENY` result, that `DENY` replaces the `ALLOW`, and the rest never run |
+| Fallback | sources consulted when the granting phase abstained | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase for the first time and a `DENY` returning at once |
+| Default | every granting and fallback evaluator abstained | `DENY`, naming the required permission |
 
-**Two consequences follow:** the granting phase stops at the first `ALLOW` or `DENY`, so a granting
-evaluator placed after it never runs. And a policy in the constraint phase can refuse an `ALLOW`
-that another evaluator produced. That is what makes the constraint phase the place for a rule that
-has to hold whatever else granted.
+**One consequence matters:** a policy in the constraint phase can refuse an `ALLOW` that a granting
+evaluator produced. That makes the constraint phase the place for a rule that has to hold however
+access was granted.
 
 ### Writing an evaluator
 
-`AuthorizationEvaluator` asks for the source and one `evaluate`. `evaluate` is a `suspend` function,
-so your evaluator can read storage or call a service without a blocking wrapper around it, while
-`Authorizer.permits` and `PermissionMatcher.covers` stay plain calls on the calling thread.
+`AuthorizationEvaluator` requires a `source` property and one `evaluate` function. `evaluate` is a
+`suspend` function, so your evaluator can read storage or call a service without a blocking wrapper
+around it, while `Authorizer.permits` and `PermissionMatcher.covers` stay plain calls on the calling
+thread.
 
-This one answers from the permission strings the subject holds, which it reads off
+This one decides from the permission strings the subject holds, which it reads from
 `context.permissions`. Those strings record a relationship with one named object, so it names `REBAC`
-as the source its answer came from:
+as the source its decision came from:
 
 ```kotlin
 import group.phorus.authz.core.evaluation.AuthorizationEvaluator
@@ -795,10 +797,10 @@ to each evaluator it reaches. Your evaluator reads the fields it cares about and
 
 An `attributes` value arrives as `Any?`, so the evaluator reading one compares or casts it as its own
 policy needs. A grant token is the string a request carries to name a grant record, and the
-fallback-phase evaluator holding the `GRANT` source is what looks that record up.
+fallback-phase evaluator holding the `GRANT` source looks that record up.
 
 Those six fields are the whole context. `Authorizer.permits` reads a `Principal` and a scope chain,
-which live outside it, so an evaluator answering from roles takes both in its own constructor. A
+which live outside it, so an evaluator deciding from roles takes both in its own constructor. A
 catalogue permission is `"${required.resourcePath.leaf.type}:${required.action}"`, since the leaf
 segment of the required permission's path carries the type and the action carries the verb:
 
@@ -817,10 +819,10 @@ class ScopedRoleEvaluator(                  // one instance per request, it hold
 
     override suspend fun evaluate(context: EvaluationContext): AuthZResult {
         val required = context.requiredPermission
-        val action = "${required.resourcePath.leaf.type}:${required.action}"
-        val granted = authorizer.permits(principal, action, scopeChain)
+        val catalogPermission = "${required.resourcePath.leaf.type}:${required.action}"
+        val granted = authorizer.permits(principal, catalogPermission, scopeChain)
 
-        return if (granted) AuthZResult.allowed(source, action)
+        return if (granted) AuthZResult.allowed(source, catalogPermission)
         else AuthZResult.abstain()
     }
 }
@@ -831,8 +833,8 @@ evaluator instances it was given, so the chain holding one is built per request.
 [Composing a chain](#composing-a-chain) for that code. An evaluator that reads the context alone,
 such as `HeldPermissionEvaluator` above, is built once and passed to every chain.
 
-The constraint phase reads a `DENY` and carries on past any other answer, so a constraint-phase
-evaluator answers `DENY` or `ABSTAIN`:
+The constraint phase reads a `DENY` and carries on past any other result, so a constraint-phase
+evaluator returns a result whose decision is `DENY` or `ABSTAIN`:
 
 ```kotlin
 class BusinessHoursPolicy : AuthorizationEvaluator {   // built once
@@ -859,7 +861,7 @@ there, so handle it where the chain is called.
 the fallback phase. Every parameter accepts `null` and a `null` is skipped, so a service with one
 source passes one argument.
 
-A chain holding a request-scoped evaluator is built per request, which is what the function below
+A chain holding a request-scoped evaluator is built per request, as the function below
 does with `ScopedRoleEvaluator`. In the two chain snippets `heldPermissionEvaluator` and
 `businessHoursPolicy` are instances of the two classes above, built once and held by the enclosing
 class along with the `authorizer`, while `baselineEvaluator` and `oneTimeGrantEvaluator` stand for
@@ -868,9 +870,9 @@ evaluators of your own, one per source you decide from.
 ```kotlin
 import group.phorus.authz.core.evaluation.AuthorizationChain
 
-fun chainFor(principal: Principal, scopeChain: List<Scope>) =
+fun chainFor(principal: Principal, chain: List<Scope>) =
     AuthorizationChain.standard(
-        rbac = ScopedRoleEvaluator(authorizer, principal, scopeChain),
+        rbac = ScopedRoleEvaluator(authorizer, principal, chain),
         implicit = baselineEvaluator,
         rebac = heldPermissionEvaluator,
         abac = businessHoursPolicy,
@@ -893,23 +895,26 @@ val context = EvaluationContext(        // one per check
     attributes = mapOf("env.business_hours" to true),
 )
 
-val result = chainFor(principal, scopeChain).evaluate(context)
+suspend fun decide(): Boolean {
+    val result = chainFor(principal, chain).evaluate(context)
 
-result.allowed   // whether to proceed
-result.source    // which layer decided, for an audit record
-result.matched   // what granted access, or what triggered the refusal
-result.grantId   // the grant record a grant-based allow came from
-result.reason    // why access was refused
+    result.source    // which layer decided, for an audit record
+    result.matched   // what granted access, or what triggered the refusal
+    result.grantId   // the grant record a grant-based allow came from
+    result.reason    // why access was refused
+
+    return result.allowed
+}
 ```
 
 For any other order, construct `AuthorizationChain` directly and fill the three phase lists in the
 order you want.
 
 ```kotlin
-fun chainFor(principal: Principal, scopeChain: List<Scope>) =
+fun customChainFor(principal: Principal, chain: List<Scope>) =
     AuthorizationChain(
         grantingEvaluators = listOf(
-            ScopedRoleEvaluator(authorizer, principal, scopeChain),
+            ScopedRoleEvaluator(authorizer, principal, chain),
             heldPermissionEvaluator,
         ),
         constraintEvaluators = listOf(businessHoursPolicy),
@@ -917,8 +922,8 @@ fun chainFor(principal: Principal, scopeChain: List<Scope>) =
     )
 ```
 
-Whether each evaluator is built once or per request is
-[the lifetime rule above](#writing-an-evaluator).
+[Writing an evaluator](#writing-an-evaluator) states which evaluators are built once and which per
+request.
 
 ## Core types reference
 
@@ -934,7 +939,8 @@ Whether each evaluator is built once or per request is
 | `PolicyDecision` | `model` | `ALLOW`, `DENY`, `ABSTAIN` |
 | `AuthZSource` | `model` | which layer decided: `IMPLICIT`, `RBAC`, `REBAC`, `ABAC`, `GRANT` |
 | `EvaluationContext` | `model` | one check's inputs: the subject's identifier, held permissions, required permission, attributes, grant token and extra properties |
-| `RoleCatalog` | `evaluation` | the application's role definitions, implemented by a service |
+| `RoleCatalog` | `evaluation` | the role definitions a check reads, with one method |
+| `InMemoryRoleCatalog` | `evaluation` | a `RoleCatalog` reading a map handed to it |
 | `Authorizer` | `evaluation` | the scoped-role decision over a `Principal` and a scope chain |
 | `PermissionMatcher` | `evaluation` | permission-string matching with wildcards and hierarchy |
 | `AuthorizationEvaluator` | `evaluation` | one source of authority, implemented by a service |
@@ -944,18 +950,18 @@ Whether each evaluator is built once or per request is
 
 ### Checks before the object is loaded
 
-Where a check runs before the object is loaded, the action is all it has to go on. The question it
-can answer is whether the subject holds that action at any scope:
+Where a check runs before the object is loaded, the permission is all it has to go on. Taking the
+`authorizer` built at startup, it can check whether the subject holds that permission at any scope:
 
 ```kotlin
-fun permitsAnywhere(principal: Principal, action: String): Boolean =
-    authorizer.permits(principal, action, principal.roles.keys.toList())
+fun permitsAnywhere(principal: Principal, permission: String): Boolean =
+    authorizer.permits(principal, permission, principal.roles.keys.toList())
 ```
 
 Passing every scope the subject holds a role at makes the check pass when any one of those roles
-grants the action, since `permits` tries each link of the chain on its own. Treat it as a
-pre-filter. It answers whether the subject holds the action anywhere, and the instance check then
-answers whether it holds it here, because that check has the object's scope chain.
+grants the permission, since `permits` tries each link of the chain on its own. Treat it as a
+pre-filter on whether the subject holds the permission anywhere, and the instance check then decides
+whether it holds on this object, because that check has the object's scope chain.
 
 ### Instance checks once the object is loaded
 
@@ -978,38 +984,38 @@ suspend fun approve(principal: Principal, id: UUID) {
 }
 ```
 
-**Where the service speaks HTTP, answer the refusal with 404 rather than 403.** The check runs once
+**Where the service speaks HTTP, return 404 for the refusal rather than 403.** The check runs once
 the object is loaded. So a 403 here confirms that the id exists.
 
 A rule that reads the object belongs in this position too, such as an approval having to come from
 somebody other than the person who requested it. A constraint-phase evaluator carries the same rule
-where the service puts the loaded object in `EvaluationContext.attributes`, whose values are typed
+when the service puts the loaded object in `EvaluationContext.attributes`, whose values are typed
 `Any?`.
 
 ## Security considerations
 
-- **`Authorizer` grants only the permissions a role's set lists.** It grants where the requested permission
-  appears in the set the catalogue answers, or where `"*"` does. So a set that omits an action makes
-  `permits` answer `false` for it, while a catalogue answering `"*"` for an unknown name turns the
-  same omission into open access.
+- **`Authorizer` grants only the permissions a role's set lists.** It grants when the requested
+  permission appears in the set the catalogue returns, or when `"*"` does. So a set that omits a
+  permission makes `permits` return `false` for it, while a catalogue returning `"*"` for an unknown
+  name turns the same omission into open access.
 - **Return 404 where a 403 would confirm an id.** An instance check runs once the object is loaded,
   so the status code carries information on its own.
-- **Set `narrowByScope` from what the `scope` claim carries.** A value in the claim matches an
-  action by equality, so turn it on only once the claim carries API scopes. Turned on over identity
-  scopes it answers `false` for every action. Left off over API scopes it gives a third-party
-  integration the subject's full authority where its consented share is what it should get.
+- **Set `narrowByScope` from what the `scope` claim carries.** A value in the claim matches the
+  requested permission by equality, so turn it on only once the claim carries API scopes. Turned on
+  over identity scopes it returns `false` for every check. Left off over API scopes it gives a
+  third-party integration the subject's full authority instead of its consented share.
 - **Build a chain holding a `Principal` per request.** `AuthorizationChain` keeps the evaluator
   instances it was given, for the life of the chain. So a chain cached past the request that built it
-  answers every later check from the first request's subject.
+  leaves every later check reading the first request's subject.
 - **Skip a malformed role entry and keep the rest.** `Scope.parseOrNull` returns `null`, so calling
   it from `mapNotNull` leaves the subject holding the roles that parsed. A role entry arrives from
   outside the process, even when it arrives signed.
-- **A catalogue edit reaches every holder of the role at once.** Changing which actions a role grants
-  applies to everybody holding that role, because the catalogue answers for the name alone.
+- **A catalogue edit reaches every holder of the role at once.** Changing which permissions a role
+  grants applies to everybody holding that role, because the catalogue is keyed by the name alone.
 - **Removing a role from a subject takes effect when the principal is next built.** So whatever
   carries the roles bounds how long that removal takes to apply.
-- **Put scoped roles in what a subject carries and permission strings in storage.** The permission
-  strings a subject holds grow with the objects they enumerate, so their count has no fixed bound.
+- **Put scoped roles in what a subject carries and permission strings in storage.** A token carrying
+  permission strings grows with the objects the subject can reach.
 
 ## Standards references
 
