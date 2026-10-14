@@ -65,7 +65,7 @@ class Authorizer(
     private fun rolesGrant(principal: Principal, action: String, scopes: List<Scope>): Boolean =
         (scopes + Scope.PLATFORM).any { scope ->
             principal.roles[scope].orEmpty().any { role ->
-                catalog.permissions(role).let { "*" in it || action in it }
+                catalog.actions(role).let { "*" in it || action in it }
             }
         }
 

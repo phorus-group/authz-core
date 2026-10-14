@@ -31,8 +31,8 @@ import group.phorus.authz.core.model.EvaluationContext
  *     override val source = AuthZSource.RBAC
  *
  *     override suspend fun evaluate(context: EvaluationContext): AuthZResult {
- *         val matched = context.privileges.firstOrNull { privilege ->
- *             Permission.parse(privilege).covers(context.requiredPermission)
+ *         val matched = context.permissions.firstOrNull { held ->
+ *             Permission.parse(held).covers(context.requiredPermission)
  *         }
  *         return if (matched != null) AuthZResult.allowed(source, matched)
  *         else AuthZResult.abstain()

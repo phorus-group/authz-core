@@ -20,7 +20,7 @@ import group.phorus.authz.core.model.RoleName
  *         "VIEWER" to setOf("report:read", "project:read", "document:read"),
  *     )
  *
- *     override fun permissions(role: RoleName): Set<String> = definitions[role.value].orEmpty()
+ *     override fun actions(role: RoleName): Set<String> = definitions[role.value].orEmpty()
  * }
  * ```
  *
@@ -39,5 +39,5 @@ interface RoleCatalog {
      *
      * @param role The role name taken from a role entry.
      */
-    fun permissions(role: RoleName): Set<String>
+    fun actions(role: RoleName): Set<String>
 }

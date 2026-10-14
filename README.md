@@ -59,34 +59,45 @@ For the JWT creation and validation that issues the claims a decision is built f
 
 ## What an authorization check asks
 
-This section defines the terms the rest of the file uses. If you are already familiar with RBAC role
-assignments scoped to a resource instance, and with permission strings of the form `path:action`,
-feel free to skip to [Getting started](#getting-started).
+If you are already familiar with scoped roles and permission strings, feel free to skip to
+[Getting started](#getting-started).
 
-**The three parts of the question:**
+A check asks whether one subject may perform one action on one object.
 
-- The **subject** is whoever the request acts for. `Principal` holds it as `subjectId`, together with
-  the roles the subject holds.
-- An **action** names a resource type and a verb, as in `document:approve` or `report:read`.
-- The **object** is the one resource the action lands on, one instance of the type named by its id,
-  as in `document/doc_789`.
+- The **subject** is whoever a check is about, which is usually the user or service account a call
+  is being made on behalf of.
+- The **action** is what the subject wants to do, such as reading or approving. Each of the two
+  ways below writes it a little differently, and each section says how.
+- The **object** is the one resource the action lands on, named by its type and its id joined by
+  `/`, as in `document/doc_789`.
 
-Each of the two models below names the object in its own way. Which one a service picks decides what
+Each of the two ways below names the object in its own way. Which one a service picks decides what
 a check takes as arguments.
 
 ### Two ways to carry authority
 
-With **scoped roles** the subject carries role names plus the **scope** each one is held at, which is
-a resource type together with one instance of that type, such as `organization:org_123`. You pass in
-the **scope chain**, the scopes the target object sits inside, outermost first. With **permission
-strings** the subject carries strings that name their own object, and so does the requirement you
-check against. Either model answers on its own, and a service can compose both.
+A **role** is a named set of actions. A **scoped role** is a role held at one **scope**, which is a
+resource type together with one instance of that type, such as the organization `org_123`. With
+scoped roles the subject carries a set of them, where the role name says what the subject is and the
+scope says where it holds that role. The object arrives separately, as the **scope chain**, the list
+of scopes the object sits inside, outermost first. A role held at an outer scope grants at the inner
+ones, so an administrator of `org_123` reaches a document in a project inside it when the chain
+passed for that document names the organization. Here an action is written as a resource type and a
+verb joined by `:`, as in `document:approve`, and the chain is what says which document.
+
+With **permission strings** the subject carries strings that already name their object, each one a
+**resource path** and an action joined by a colon, as in `organization/org_123:read`. A resource
+path is a chain of types and ids separated by `/`, and it names the object, so the action here is
+the bare verb `read`. What a check requires is another string of the same shape, so the two strings
+are all it compares.
+
+Either one answers on its own, and a service can compose both.
 
 | What differs | Scoped roles | Permission strings |
 |---|---|---|
-| What a check reads | a [`Principal`](#core-types-reference) and a scope chain | a list of permission strings |
+| What a check reads | a [`Principal`](#core-types-reference), an action and a scope chain | the permission strings held and the one required |
 | Where the object is named | the scope chain the caller passes in | inside the permission string itself |
-| What the subject carries | one entry per role per scope | one string per object per action |
+| What the subject carries | one scoped role per role and scope | one string per object per action |
 | How that set grows | with the number of places it holds a role | with the number of objects reachable |
 | When removing authority takes effect | when a service next builds the principal | when the strings are next supplied |
 | How breadth works | a role at an outer scope grants at inner ones | a path prefix covers everything under it |
@@ -154,8 +165,8 @@ permission-string model, which answers on its own and needs none of the three.
 **1. Declare the roles and the actions each one grants.**
 
 A **role catalogue** maps a role name to the actions that role grants. A `RoleCatalog` implementation
-is static application code: one entry per role for the whole deployment, held in memory and read on
-every check.
+is static application code: one definition per role for the whole deployment, held in memory and
+read on every check.
 
 ```kotlin
 import group.phorus.authz.core.evaluation.RoleCatalog
@@ -170,31 +181,33 @@ object ApplicationRoles : RoleCatalog {
         RoleName("VIEWER") to setOf("report:read", "project:read", "document:read"),
     )
 
-    override fun permissions(role: RoleName): Set<String> = definitions[role].orEmpty()
+    override fun actions(role: RoleName): Set<String> = definitions[role].orEmpty()
 }
 ```
 
-The colon in `document:approve` is convention here. `Authorizer` compares a catalogue action to
-the requested action whole, so a name of your own works as well as these. The entry `"*"` is the one
-exception, and a role whose set holds it grants every action. An entry `project:*` grants nothing
-unless a check requests the literal action `project:*`, because a partial form is compared whole
+`Authorizer` is what answers a scoped-role check. It compares a catalogue action to the requested
+action as one whole string, so the two match only when they are equal, and the colon in
+`document:approve` is convention here. A name of your own works as well as these. The action `"*"`
+is the one exception, and a role whose set holds it grants every action. The action `project:*`
+grants nothing unless a check requests the literal action `project:*`, because it is compared whole
 like any other action. See [Wildcards](#wildcards) for what `*` means in each place it appears.
 
-Whole comparison bounds what one entry grants. `report:manage` in this catalogue is the action
+Whole comparison bounds what one action grants. `report:manage` in this catalogue is the action
 `report:manage`, so a subject whose only role is `ADMIN` is refused a `report:read` check, and a
 role that grants both lists both.
 
-**`manage` means opposite things in the two models, and both lines below are true.**
+**`manage` is matched differently in the two models, and both lines below are true.**
 
 ```kotlin
-authorizer.permits(principal, "report:read", chain)       // false, ADMIN holds report:manage
-PermissionMatcher.covers("report:manage", "report:read")  // true
+// principal and chain are the ones built in steps 2 and 3
+authorizer.permits(principal, "report:read", chain)   // false, ADMIN holds report:manage
+PermissionMatcher.covers(granted = "report:manage", required = "report:read")   // true
 ```
 
 A catalogue action is compared whole, so `manage` there grants the action spelled `report:manage`
-and nothing else. In a permission string `manage` covers every action on a path it covers, which
-[Standard actions](#standard-actions) states on the other side of this asymmetry. A string copied
-from one model into the other changes meaning.
+and nothing else. In a permission string `manage` covers every action on that path and on the paths
+under it, which [Standard actions](#standard-actions) states on the other side of this asymmetry. A
+string copied from one model into the other changes meaning.
 
 **2. Build a principal for the subject the request acts for.**
 
@@ -202,12 +215,8 @@ A `Principal` belongs to one request. Build one per request, from that request's
 held past its request answers every later check from the first request's subject.
 
 Each role is keyed by the scope it is held at. So one principal can hold several roles in a single
-organization, and roles in several organizations at once. A third argument, `scope`, holds the OAuth
-`scope` claim as a list of strings, and it defaults to an empty list. `Authorizer` reads it only
-when constructed with `narrowByScope = true`, and the `Scope` type keying the map is a different
-type, a resource type with one instance of it. See [Delegated scope](#delegated-scope) for what the
-claim does, and [Scoped roles](#scoped-roles) for building the same map from a token's `roles`
-claim.
+organization, and roles in several organizations at once. See [Scoped roles](#scoped-roles) for
+building the same map from a token's `roles` claim.
 
 ```kotlin
 import group.phorus.authz.core.model.Principal
@@ -221,6 +230,11 @@ val principal = Principal(
     ),
 )
 ```
+
+`Principal` takes a third argument, `scope`, which holds the OAuth `scope` claim as a list of
+strings and defaults to an empty list. `Authorizer` reads it only when constructed with
+`narrowByScope = true`. The `Scope` type keying the roles map is a different type, a resource type
+with one instance of it. See [Delegated scope](#delegated-scope) for what the claim does.
 
 **3. Check an action against the scope chain the object sits in.**
 
@@ -276,8 +290,9 @@ PermissionMatcher.covers(
 ### Scoped roles
 
 A role name says what the subject is. A [`Scope`](#core-types-reference) says where the subject is
-that thing. The two together are one role assignment. A definition carries actions alone while an
-assignment carries subject, role and scope, which is the same split Azure RBAC and GCP IAM use.
+that thing. The two together are one scoped role, which Azure RBAC and GCP IAM call a role
+assignment. A role definition carries actions alone, a scoped role adds the scope, and a `Principal`
+holds those scoped roles for one subject. That is the same split those two products use.
 
 ```kotlin
 RoleName("ADMIN")                  // what
@@ -294,10 +309,11 @@ Scope.parseOrNull("organization:a:b")         // Scope("organization", "a:b")
 ```
 
 A **role entry** is one value of the `roles` claim, which a service reads into a role name and the
-`Scope` it is held at. Its shape is the issuer's to pick, under
+`Scope` it is held at. Whatever issued the claim picks its shape, under
 [RFC 7643 §4.1.2](https://datatracker.ietf.org/doc/html/rfc7643#section-4.1.2), which defines `roles`
 and specifies no vocabulary or syntax for its values. These two shapes are the ones this library
-documents, and an entry naming no scope is held at the [platform scope](#the-platform-scope):
+documents, with the raw entry on the left and what a service reads it as on the right. An entry
+naming no scope is held at the [platform scope](#the-platform-scope):
 
 ```
 ADMIN@organization:org_123     RoleName("ADMIN") at Scope("organization", "org_123")
@@ -343,14 +359,15 @@ val principal = Principal(
 
 #### The role catalogue
 
-`RoleCatalog` has one method, and the consumer implements it:
+`RoleCatalog` has one method, and a service implements it:
 
 ```kotlin
-fun permissions(role: RoleName): Set<String>
+fun actions(role: RoleName): Set<String>
 ```
 
 The strings in the set are actions, and `Authorizer` compares each one to the requested action whole.
-The entry `"*"` is the exception, and it grants every action.
+The action `"*"` is the exception, and it grants every action. A catalogue holds actions and
+`PermissionMatcher` reads permission strings, so each way keeps its own vocabulary.
 
 | What the catalogue answers for a name | What a subject holding that role may do |
 |---|---|
@@ -363,20 +380,25 @@ principal holds at the scopes being checked, and those names arrived from outsid
 is asked about unknown, misspelled and withdrawn names too. The `orEmpty()` in the quick start
 answers the empty set, and the empty set grants no action, which is what makes such a name safe.
 
-An action names a type and a verb. `document:approve` names the action and the scope chain names the
-object, so one definition serves every organization.
+By convention a catalogue action names a type and a verb, as `document:approve` does, and a
+permission string's action is the bare verb instead. The action names the type and the scope chain
+names the object, so one definition serves every organization. The bridge in
+[Writing an evaluator](#writing-an-evaluator) builds a catalogue action in that spelling, so an
+evaluator answering from both models depends on it.
 
-**Inheritance between roles belongs inside your catalogue.** The set `permissions` answers is flat
-and `Authorizer` reads it as it comes. So where a senior role absorbs a junior one, compute the
-transitive closure once at startup and answer the union: `ADMIN` absorbing `APPROVER` means the
-`ADMIN` name answers its own actions and `APPROVER`'s together. That inheritance between roles is
-hierarchical RBAC, standardised in ANSI INCITS 359-2004.
+**Role inheritance, where a senior role absorbs a junior one, belongs inside your catalogue.** The
+set `actions` answers is flat and `Authorizer` reads it as it comes. So compute the transitive
+closure once at startup and answer the union: `ADMIN` absorbing `APPROVER` means the `ADMIN` name
+answers its own actions and `APPROVER`'s together. Role inheritance is hierarchical RBAC,
+standardised in ANSI INCITS 359-2004, and it is a separate mechanism from the
+[hierarchy inheritance](#hierarchy-inheritance) between resource paths.
 
 #### The scope chain
 
-`Authorizer.permits` takes the scope chain the target object sits in, outermost first. A role held at
-any link of that chain grants the action, so an organization administrator reaches every project
-inside the organization through that one role.
+`Authorizer.permits` takes the scope chain the target object sits in, outermost first. A role grants
+the action when its catalogue set holds that action and the role is held at any link of the chain,
+so an organization administrator reaches every project inside the organization through that one
+role. Where the subject holds several roles, any one of them granting the action is enough.
 
 | Roles held | Chain passed | Result |
 |---|---|---|
@@ -394,8 +416,9 @@ record, and passes those as the chain. See
 
 #### The platform scope
 
-`Scope.PLATFORM` is `Scope("platform", "*")`, and `Authorizer` consults it on every call, whatever
-the chain holds. So a role held there grants everywhere, including when the chain is empty.
+`Scope.PLATFORM` is `Scope("platform", "*")`, where the `*` is a literal id, and `Authorizer`
+consults it on every call, whatever the chain holds. So a role held there grants everywhere,
+including when the chain is empty.
 
 ```kotlin
 val operator = Principal(
@@ -410,7 +433,9 @@ With an empty chain, a role held at `Scope.PLATFORM` is the only one consulted.
 
 #### Delegated scope
 
-`Principal.scope` holds the `scope` claim as it arrived, which
+A token can be issued to an application acting for the subject, and the `scope` claim records how
+much of the subject's authority that application was consented to use. `Principal.scope` holds the
+claim as it arrived, which
 [RFC 6749 §3.3](https://datatracker.ietf.org/doc/html/rfc6749#section-3.3) defines as the authority
 delegated to the client application. It is a list of strings. The `Scope` type above is its own
 type: a resource type with one instance of it.
@@ -435,7 +460,7 @@ reads the same either way, so the setting is what states which kind the claim ho
   the `RoleCatalog`. From then on a check grants only what the subject's roles and the delegated set
   both allow.
 
-An entry in the claim matches an action by equality, so the claim has to carry the action itself and
+A value in the claim matches an action by equality, so the claim has to carry the action itself and
 it carries no wildcard. An issuer of API scopes lists every action a client may perform, and
 `listOf("*")` in the claim matches the action `"*"` alone, where `setOf("*")` in a catalogue grants
 every action. Take `permits(principal, "report:manage", chain)` where the subject's roles already
@@ -468,16 +493,20 @@ belongs to the resource path. `Permission.parse` reads that form, and it throws
 either end. Where a string reached the process from outside, catch it.
 
 `Permission` has no non-throwing reader, so that exception is how a malformed string arrives.
-`anyCovers` and `findMatch`, the two [matcher](#matching-rules) calls that search a held list, parse
-the held strings in list order and stop at the first one that covers. So a malformed entry ahead of
-the match throws from the matcher call, and one behind it is never read. Validate held strings where
-they enter the process. `Scope.parseOrNull` answers `null` and the caller skips the entry, while
-`Permission.parse` throws, so each model needs its own guard at the boundary.
+`anyCovers` and `findMatch`, the two [matcher](#matching-rules) calls that search a list of
+permission strings the subject holds, parse those strings in list order and stop at the first one
+that covers. So a malformed entry ahead of the match throws from the matcher call, and one behind it
+is never read. Validate held strings where they enter the process. `Scope.parseOrNull` answers
+`null` and the caller skips the entry, while `Permission.parse` throws, so each model needs its own
+guard at the boundary.
 
-A catalogue action and a permission string read alike, and the colon does a different job in each.
-`report:read` in your catalogue is one action, and `Authorizer` compares it to the requested action
-whole, so the colon there is convention. `report:read` as a permission string is the resource path
-`report` and the action `read`, and `covers` compares the two halves separately.
+A catalogue action, a permission string and a `Scope` all read alike, and the colon does a different
+job in each. `report:read` in your catalogue is one action, and `Authorizer` compares it to the
+requested action whole, so the colon there is convention. `report:read` as a permission string is
+the resource path `report` and the action `read`, and `covers` compares the two halves separately.
+`organization:org_123` as a `Scope` is a resource type and one instance id. `Scope.parseOrNull`
+splits at the first colon and `Permission.parse` at the last, so `organization:a:b` is the id `a:b`
+to one and the action `b` to the other. Each value is read by the call of the model it came from.
 
 #### Standard actions
 
@@ -514,8 +543,8 @@ answers `true`. Step 1 of the [quick start](#quick-start) shows both answers sid
 | Narrower action | `report:read` | `report:delete` | does not cover |
 | Narrower path | `organization/org_123/project/proj_456:manage` | `organization/org_123:read` | does not cover |
 
-**`PermissionMatcher` is the entry point**, and it takes either raw strings or parsed `Permission`
-objects. `anyCovers` and `findMatch` search a list the subject holds:
+**`PermissionMatcher` holds the matching calls**, and it takes either raw strings or parsed
+`Permission` objects. `anyCovers` and `findMatch` search a list the subject holds:
 
 ```kotlin
 val held = listOf("organization/org_123:manage", "report:read", "report:list")
@@ -530,8 +559,9 @@ and an audit record can name what granted access.
 
 #### Hierarchy inheritance
 
-A permission at a broader path covers everything under it. The cascade is modelled on the resource
-hierarchies of GCP IAM and Azure RBAC:
+A granted path covers a required path when the granted segments cover the leading segments of the
+required one, so a permission at a broader path covers everything under it. The cascade is modelled
+on the resource hierarchies of GCP IAM and Azure RBAC:
 
 ```
 organization/org_123:manage
@@ -546,17 +576,20 @@ paths under it.
 
 ### Resource paths
 
-A resource path is the structure underneath a permission string. If you only call
-`PermissionMatcher`, feel free to skip to [the evaluation chain](#the-evaluation-chain).
+A resource path is the path half of a permission string. If you only call `PermissionMatcher`, feel
+free to skip to [the evaluation chain](#the-evaluation-chain).
 
 #### Segments
 
 A `ResourcePath` is an ordered list of `ResourceSegment`s, each one a type with an optional instance
-id.
+id, and a raw path writes them separated by `/`. A `ResourceSegment` pairs a type with an instance
+id as a `Scope` does, and writes it `organization/org_123` where a `Scope` writes
+`organization:org_123`. The two belong to different ways of carrying authority: a segment is part of
+a resource path, where a `Scope` keys a role and sits in a scope chain.
 
-**How `parse` reads a raw path:** it pairs the tokens. Tokens at even indices become types, and tokens
-at odd indices become the instance id of the type before them. So the four tokens below give two
-segments rather than four.
+**How `parse` reads a raw path:** it splits on `/` and pairs the tokens. Tokens at even indices
+become types, and tokens at odd indices become the instance id of the type before them. So the four
+tokens below give two segments rather than four.
 
 ```kotlin
 val path = ResourcePath.parse("organization/org_123/project/proj_456")
@@ -582,16 +615,16 @@ type-level segment both cover any instance of the type.
 | `ResourceSegment("organization", "*")` | any organization | false | true | false |
 | `ResourceSegment("organization")` | any organization | false | false | true |
 
-The two broad shapes reach a path from different directions. A `*` instance id is written into the
-string. A type-level segment is what `parse` leaves for a type token standing alone. `covers` reads
-the two the same way, so either spelling works in a stored grant.
+A `*` instance id is written into the string. A type-level segment is what `parse` leaves for a type
+token standing alone. `covers` reads the two the same way, so either spelling works in a stored
+permission string.
 
 A `*` in the type position covers any type.
 
 #### Ancestors
 
-`ancestors()` answers a `Sequence`, walking up the hierarchy and yielding one path per link above the
-leaf. It starts at the direct parent and ends at the path holding the root segment alone. A
+`ancestors()` answers a `Sequence`, walking up the hierarchy and yielding one path per segment above
+the leaf. It starts at the direct parent and ends at the path holding the root segment alone. A
 single-segment path yields an empty sequence. Walk it to look for a grant recorded on a container
 above the object.
 
@@ -616,18 +649,9 @@ organization.isAncestorOf(organization)   // false
 
 #### Wildcards
 
-`*` stands in for an instance id, for a type, or for both.
-
-```kotlin
-ResourcePath.parse("organization/*").covers(ResourcePath.parse("organization/org_123"))   // true
-ResourceSegment("*", "proj_456").covers(ResourceSegment("project", "proj_456"))           // true
-```
-
-`covers` asks the same question at three levels. `PermissionMatcher` compares two permissions,
-`ResourcePath.covers` compares two paths, and `ResourceSegment.covers` compares two segments.
-
-The meaning of `*` follows from where it appears, so a string carrying one changes meaning when it
-is copied between a `RoleCatalog` set, a `scope` claim and a permission string:
+`*` stands in for an instance id, for a type, or for both. Its meaning follows from where it
+appears, so a string carrying one changes meaning when it is copied between a `RoleCatalog` set, a
+`scope` claim and a permission string:
 
 | Where `*` appears | What it means there |
 |---|---|
@@ -638,6 +662,14 @@ is copied between a `RoleCatalog` set, a `scope` claim and a permission string:
 | an action inside a `RoleCatalog` set, as `project:*` | the action written `project:*`, compared whole |
 | the `scope` claim, as `listOf("*")` | the action `"*"` alone |
 | `Scope.PLATFORM`, which is `Scope("platform", "*")` | the id of that one scope, matched as it reads |
+
+```kotlin
+ResourcePath.parse("organization/*").covers(ResourcePath.parse("organization/org_123"))   // true
+ResourceSegment("*", "proj_456").covers(ResourceSegment("project", "proj_456"))           // true
+```
+
+`covers` asks the same question at three levels. `PermissionMatcher` compares two permissions,
+`ResourcePath.covers` compares two paths, and `ResourceSegment.covers` compares two segments.
 
 ## The evaluation chain
 
@@ -672,7 +704,7 @@ An evaluator answers with a `PolicyDecision`, which `AuthZResult.decision` carri
 | Decision | What it means |
 |---|---|
 | `ALLOW` | this source grants access |
-| `DENY` | this source refuses access, and the refusal stands over any grant |
+| `DENY` | this source refuses access, and the refusal stands over any `ALLOW` |
 | `ABSTAIN` | this source has nothing to say, so the chain carries on |
 
 `AuthZResult` has one factory per decision, and one property reads each decision back:
@@ -684,11 +716,11 @@ An evaluator answers with a `PolicyDecision`, which `AuthZResult.decision` carri
 | `AuthZResult.abstain()` | the decision alone | `abstained` |
 
 `matched` holds what granted access or what triggered the refusal, as a permission string, a
-relationship or a policy name. `grantId` is a `UUID` and it is filled where `source` is `GRANT`, so a
-grant-based allow names the record it came from. `reason` carries the text an audit record of a
-refusal reads. `source`, `matched`, `grantId` and `reason` are each nullable, so one log line records
-whatever grounds the deciding evaluator supplied, and the chain's own default `DENY` carries a reason
-alone.
+catalogue action, a relationship or a policy name. `grantId` is a `UUID` and it is filled where
+`source` is `GRANT`, so a grant-based allow names the record it came from. `reason` carries the text
+an audit record of a refusal reads. `source`, `matched`, `grantId` and `reason` are each nullable,
+so one log line records whatever grounds the deciding evaluator supplied, and the chain's own
+default `DENY` carries a reason alone.
 
 ### Phases and precedence
 
@@ -696,23 +728,26 @@ alone.
 check takes through them, and the table after it carries the rule each phase runs under:
 
 ```
-granting:    first ALLOW -> constraint     any DENY -> return that DENY
-                          all ABSTAIN -> fallback
-constraint:  first DENY -> return it       none -> return the grant
-fallback:    first ALLOW -> constraint     all ABSTAIN -> default DENY
+phase        what ends the phase           what happens then
+granting     the first ALLOW or DENY       an ALLOW -> constraint, a DENY returns
+             every evaluator abstained     -> fallback
+constraint   the first DENY                that DENY returns instead of the ALLOW
+             no DENY                       the ALLOW returns
+fallback     the first ALLOW or DENY       an ALLOW -> constraint, a DENY returns
+             every evaluator abstained     the default DENY returns
 ```
 
 | Phase | What its evaluators are for | The rule it runs under |
 |---|---|---|
-| Granting | sources that confer authority | the first `ALLOW` wins and the constraint phase then runs; a `DENY` returns on the spot |
-| Constraint | cross-cutting policies that restrict | they run in order until one answers `DENY`, that `DENY` replaces the grant, and the rest never run |
-| Fallback | sources consulted when the granting phase abstained | the first `ALLOW` wins and the constraint phase runs for the first time; a `DENY` returns on the spot |
+| Granting | sources that confer authority | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase next and a `DENY` returning on the spot |
+| Constraint | cross-cutting policies that restrict | they run in order until one answers `DENY`, that `DENY` replaces the `ALLOW`, and the rest never run |
+| Fallback | sources consulted when the granting phase abstained | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase for the first time and a `DENY` returning on the spot |
 | Default | the granting and fallback phases both abstained throughout | `DENY`, naming the required permission |
 
-**Two consequences follow:** a `DENY` from a granting evaluator is the chain's answer immediately, so
-the chain returns there. And a policy in the constraint phase can refuse a grant that another
-evaluator produced. That is what makes the constraint phase the place for a rule that has to hold
-whatever else granted.
+**Two consequences follow:** the granting phase stops at the first `ALLOW` or `DENY`, so a granting
+evaluator placed after it never runs. And a policy in the constraint phase can refuse an `ALLOW`
+that another evaluator produced. That is what makes the constraint phase the place for a rule that
+has to hold whatever else granted.
 
 ### Writing an evaluator
 
@@ -721,7 +756,7 @@ so your evaluator can read storage or call a service without a blocking wrapper 
 `Authorizer.permits` and `PermissionMatcher.covers` stay plain calls on the calling thread.
 
 This one answers from the permission strings the subject holds, which it reads off
-`context.privileges`. Those strings record a relationship with one named object, so it names `REBAC`
+`context.permissions`. Those strings record a relationship with one named object, so it names `REBAC`
 as the source its answer came from:
 
 ```kotlin
@@ -736,7 +771,7 @@ class HeldPermissionEvaluator : AuthorizationEvaluator {   // built once
     override val source = AuthZSource.REBAC
 
     override suspend fun evaluate(context: EvaluationContext): AuthZResult {
-        val matched = PermissionMatcher.findMatch(context.privileges, context.requiredPermission)
+        val matched = PermissionMatcher.findMatch(context.permissions, context.requiredPermission)
 
         return if (matched != null) AuthZResult.allowed(source, matched)
         else AuthZResult.abstain()
@@ -750,9 +785,9 @@ to each evaluator it reaches. Your evaluator reads the fields it cares about and
 | Field | What it holds |
 |---|---|
 | `userId` | the subject's identifier, as a `UUID`; pass `Principal.subjectId` |
-| `privileges` | the permission strings the subject holds, as raw strings in the `<resource-path>:<action>` form, which is what `findMatch` searches |
+| `permissions` | the permission strings the subject holds, as raw strings in the `<resource-path>:<action>` form, which is what `findMatch` searches |
 | `requiredPermission` | what the check requires, already parsed as a `Permission` |
-| `attributes` | contextual values keyed `category.name`, typed `Map<String, Any?>`, such as `"user.region"` to `"EU"` or `"env.business_hours"` to `true` |
+| `attributes` | contextual values typed `Map<String, Any?>`, keyed by a dotted name whose first part groups related values, such as `"user.region"` to `"EU"` or `"env.business_hours"` to `true` |
 | `grantToken` | a grant token as it arrived, as a `String?`, for a fallback evaluator to look up |
 | `properties` | extra pairs of strings the service puts there for evaluators of its own |
 
@@ -823,7 +858,7 @@ the fallback phase. Every parameter accepts `null` and a `null` is skipped, so a
 source passes one argument.
 
 A chain holding a request-scoped evaluator is built per request, which is what the function below
-does with `ScopedRoleEvaluator`. In both snippets `heldPermissionEvaluator` and
+does with `ScopedRoleEvaluator`. In the two chain snippets `heldPermissionEvaluator` and
 `businessHoursPolicy` are instances of the two classes above, built once and held by the enclosing
 class along with the `authorizer`, while `baselineEvaluator` and `oneTimeGrantEvaluator` stand for
 evaluators of your own, one per source you decide from.
@@ -842,7 +877,7 @@ fun chainFor(principal: Principal, scopeChain: List<Scope>) =
 ```
 
 `AuthorizationChain.evaluate` is a `suspend` function, and it takes an `EvaluationContext`. `userId`
-and `requiredPermission` are the two required arguments, `privileges`, `attributes` and `properties`
+and `requiredPermission` are the two required arguments, `permissions`, `attributes` and `properties`
 default to empty, and `grantToken` defaults to `null`:
 
 ```kotlin
@@ -851,7 +886,7 @@ import group.phorus.authz.core.model.Permission
 
 val context = EvaluationContext(        // one per check
     userId = principal.subjectId,
-    privileges = listOf("organization/org_123:manage", "report:read"),
+    permissions = listOf("organization/org_123:manage", "report:read"),
     requiredPermission = Permission.parse("organization/org_123/project/proj_456:read"),
     attributes = mapOf("env.business_hours" to true),
 )
@@ -885,7 +920,7 @@ Whether each evaluator is built once or per request is
 
 ## Core types reference
 
-| Type | Package | What it holds |
+| Type | Package, under `group.phorus.authz.core` | What it holds |
 |------|---------|---------------|
 | `RoleName` | `model` | a role name, as an inline value class over `String` |
 | `Scope` | `model` | a resource type and one instance of it, formatted `type:id` |
@@ -896,11 +931,11 @@ Whether each evaluator is built once or per request is
 | `AuthZResult` | `model` | a decision with its source, what matched, a grant id and a reason |
 | `PolicyDecision` | `model` | `ALLOW`, `DENY`, `ABSTAIN` |
 | `AuthZSource` | `model` | which layer decided: `IMPLICIT`, `RBAC`, `REBAC`, `ABAC`, `GRANT` |
-| `EvaluationContext` | `model` | one check's inputs: the subject's identifier, held privileges, required permission, attributes, grant token and extra properties |
-| `RoleCatalog` | `evaluation` | the application's role definitions, implemented by the consumer |
+| `EvaluationContext` | `model` | one check's inputs: the subject's identifier, held permissions, required permission, attributes, grant token and extra properties |
+| `RoleCatalog` | `evaluation` | the application's role definitions, implemented by a service |
 | `Authorizer` | `evaluation` | the scoped-role decision over a `Principal` and a scope chain |
 | `PermissionMatcher` | `evaluation` | permission-string matching with wildcards and hierarchy |
-| `AuthorizationEvaluator` | `evaluation` | one source of authority, implemented by the consumer |
+| `AuthorizationEvaluator` | `evaluation` | one source of authority, implemented by a service |
 | `AuthorizationChain` | `evaluation` | a chain of evaluators with granting, constraint and fallback phases |
 
 ## Enforcement patterns
@@ -941,8 +976,8 @@ suspend fun approve(principal: Principal, id: UUID) {
 }
 ```
 
-**Answer the refusal with 404 rather than 403.** The check runs once the object is loaded. So a 403
-here confirms that the id exists.
+**Where the service speaks HTTP, answer the refusal with 404 rather than 403.** The check runs once
+the object is loaded. So a 403 here confirms that the id exists.
 
 A rule that reads the object belongs in this position too, such as an approval having to come from
 somebody other than the person who requested it. A constraint-phase evaluator carries the same rule
@@ -957,10 +992,10 @@ where the service puts the loaded object in `EvaluationContext.attributes`, whos
   same omission into open access.
 - **Return 404 where a 403 would confirm an id.** An instance check runs once the object is loaded,
   so the status code carries information on its own.
-- **Set `narrowByScope` from what the `scope` claim carries.** An entry matches an action by
-  equality, so turn it on only once the claim carries API scopes. Turned on over identity scopes it
-  answers `false` for every action. Left off over API scopes it gives a third-party integration the
-  subject's full authority where its consented share is what it should get.
+- **Set `narrowByScope` from what the `scope` claim carries.** A value in the claim matches an
+  action by equality, so turn it on only once the claim carries API scopes. Turned on over identity
+  scopes it answers `false` for every action. Left off over API scopes it gives a third-party
+  integration the subject's full authority where its consented share is what it should get.
 - **Build a chain holding a `Principal` per request.** `AuthorizationChain` keeps the evaluator
   instances it was given, for the life of the chain. So a chain cached past the request that built it
   answers every later check from the first request's subject.
@@ -982,8 +1017,8 @@ where the service puts the loaded object in `EvaluationContext.attributes`, whos
   `scope` as the authority delegated to a client.
 - [RFC 9068 §7.2](https://datatracker.ietf.org/doc/html/rfc9068#section-7.2) JWT profile for OAuth 2.0
   access tokens, which registers `roles` as a claim name.
-- ANSI INCITS 359-2004, NIST RBAC. Core RBAC makes a session's permissions the union over the roles
-  it activates, which here is the union over the roles a `Principal` holds at the scopes checked.
+- ANSI INCITS 359-2004, NIST RBAC. Core RBAC makes the permissions in force the union over the
+  roles activated, which here is the union over the roles a `Principal` holds at the scopes checked.
   Hierarchical RBAC adds inheritance between roles.
 
 ## Building and contributing

@@ -20,7 +20,7 @@ class AuthorizerTest {
             APPROVER to setOf("document:approve", "document:read"),
         )
 
-        override fun permissions(role: RoleName): Set<String> = definitions[role].orEmpty()
+        override fun actions(role: RoleName): Set<String> = definitions[role].orEmpty()
     }
 
     private val authorizer = Authorizer(catalog)
