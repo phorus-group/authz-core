@@ -66,10 +66,11 @@ A check asks whether one subject may perform one action on one object.
 
 - The **subject** is whoever a check is about, which is usually the user or service account a call
   is being made on behalf of.
-- The **action** is what the subject wants to do, such as reading or approving. Each of the two
-  ways below writes it a little differently, and each section says how.
+- The **action** is what the subject wants to do, such as `read` or `approve`.
 - The **object** is the one resource the action lands on, named by its type and its id joined by
   `/`, as in `document/doc_789`.
+- A **permission** names a resource and an action joined by a colon, as in `document:approve`. The
+  two ways below differ in how its resource half names the object, and each section says how.
 
 Each of the two ways below names the object in its own way. Which one a service picks decides what
 a check takes as arguments.
@@ -82,9 +83,8 @@ scoped roles the subject carries a set of them, where the role name says what th
 scope says where it holds that role. The object arrives separately, as the **scope chain**, the list
 of scopes the object sits inside, outermost first. A role held at an outer scope grants at the inner
 ones, so an administrator of `org_123` reaches a document in a project inside it when the chain
-passed for that document names the organization. Each permission a role grants is written here as an
-**action**, a resource type and a verb joined by `:`, as in `document:approve`, and the chain is
-what says which document.
+passed for that document names the organization. Each permission a role grants names a resource
+type rather than one object, as in `document:approve`, and the chain is what says which document.
 
 With **permission strings** the subject carries strings that already name their object, each one a
 **resource path** and an action joined by a colon, as in `organization/org_123:read`. A resource
@@ -182,11 +182,11 @@ object ApplicationRoles : RoleCatalog {
         RoleName("VIEWER") to setOf("report:read", "project:read", "document:read"),
     )
 
-    override fun actions(role: RoleName): Set<String> = definitions[role].orEmpty()
+    override fun permissions(role: RoleName): Set<String> = definitions[role].orEmpty()
 }
 ```
 
-`Authorizer` is what answers a scoped-role check. It compares a catalogue action to the requested
+`Authorizer` is what answers a scoped-role check. It compares a catalogue permission to the requested
 action as one whole string, so the two match only when they are equal, and the colon in
 `document:approve` is convention here. A name of your own works as well as these. The action `"*"`
 is the one exception, and a role whose set holds it grants every action. The action `project:*`
@@ -205,7 +205,7 @@ authorizer.permits(principal, "report:read", chain)   // false, ADMIN holds repo
 PermissionMatcher.covers(granted = "report:manage", required = "report:read")   // true
 ```
 
-A catalogue action is compared whole, so `manage` there grants the action spelled `report:manage`
+A catalogue permission is compared whole, so `manage` there grants the action spelled `report:manage`
 and nothing else. In a permission string `manage` covers every action on that path and on the paths
 under it, which [Standard actions](#standard-actions) states on the other side of this asymmetry. A
 string copied from one model into the other changes meaning.
@@ -363,12 +363,13 @@ val principal = Principal(
 `RoleCatalog` has one method, and a service implements it:
 
 ```kotlin
-fun actions(role: RoleName): Set<String>
+fun permissions(role: RoleName): Set<String>
 ```
 
-The strings in the set are actions, and `Authorizer` compares each one to the requested action whole.
-The action `"*"` is the exception, and it grants every action. A catalogue holds actions and
-`PermissionMatcher` reads permission strings, so each way keeps its own vocabulary.
+The strings in the set are permissions naming a resource type, and `Authorizer` compares each one to
+the requested permission whole. The entry `"*"` is the exception, and it grants everything. A
+catalogue holds type-level permissions where `PermissionMatcher` reads ones that name an instance,
+so a string belongs to the way it was written for.
 
 | What the catalogue answers for a name | What a subject holding that role may do |
 |---|---|
@@ -381,14 +382,14 @@ principal holds at the scopes being checked, and those names arrived from outsid
 is asked about unknown, misspelled and withdrawn names too. The `orEmpty()` in the quick start
 answers the empty set, and the empty set grants no action, which is what makes such a name safe.
 
-By convention a catalogue action names a type and a verb, as `document:approve` does, and a
+By convention a catalogue permission names a type and a verb, as `document:approve` does, and a
 permission string's action is the bare verb instead. The action names the type and the scope chain
 names the object, so one definition serves every organization. The bridge in
-[Writing an evaluator](#writing-an-evaluator) builds a catalogue action in that spelling, so an
+[Writing an evaluator](#writing-an-evaluator) builds a catalogue permission in that spelling, so an
 evaluator answering from both models depends on it.
 
 **Role inheritance, where a senior role absorbs a junior one, belongs inside your catalogue.** The
-set `actions` answers is flat and `Authorizer` reads it as it comes. So compute the transitive
+set `permissions` answers is flat and `Authorizer` reads it as it comes. So compute the transitive
 closure once at startup and answer the union: `ADMIN` absorbing `APPROVER` means the `ADMIN` name
 answers its own actions and `APPROVER`'s together. Role inheritance is hierarchical RBAC,
 standardised in ANSI INCITS 359-2004, and it is a separate mechanism from the
@@ -501,9 +502,9 @@ is never read. Validate held strings where they enter the process. `Scope.parseO
 `null` and the caller skips the entry, while `Permission.parse` throws, so each model needs its own
 guard at the boundary.
 
-A catalogue action, a permission string and a `Scope` all read alike, and the colon does a different
+A catalogue permission, a permission string and a `Scope` all read alike, and the colon does a different
 job in each. `report:read` in your catalogue is one action, and `Authorizer` compares it to the
-requested action whole, so the colon there is convention. `report:read` as a permission string is
+requested permission whole, so the colon there is convention. `report:read` as a permission string is
 the resource path `report` and the action `read`, and `covers` compares the two halves separately.
 `organization:org_123` as a `Scope` is a resource type and one instance id. `Scope.parseOrNull`
 splits at the first colon and `Permission.parse` at the last, so `organization:a:b` is the id `a:b`
@@ -717,7 +718,7 @@ An evaluator answers with a `PolicyDecision`, which `AuthZResult.decision` carri
 | `AuthZResult.abstain()` | the decision alone | `abstained` |
 
 `matched` holds what granted access or what triggered the refusal, as a permission string, a
-catalogue action, a relationship or a policy name. `grantId` is a `UUID` and it is filled where
+catalogue permission, a relationship or a policy name. `grantId` is a `UUID` and it is filled where
 `source` is `GRANT`, so a grant-based allow names the record it came from. `reason` carries the text
 an audit record of a refusal reads. `source`, `matched`, `grantId` and `reason` are each nullable,
 so one log line records whatever grounds the deciding evaluator supplied, and the chain's own
@@ -798,7 +799,7 @@ fallback-phase evaluator holding the `GRANT` source is what looks that record up
 
 Those six fields are the whole context. `Authorizer.permits` reads a `Principal` and a scope chain,
 which live outside it, so an evaluator answering from roles takes both in its own constructor. A
-catalogue action is `"${required.resourcePath.leaf.type}:${required.action}"`, since the leaf
+catalogue permission is `"${required.resourcePath.leaf.type}:${required.action}"`, since the leaf
 segment of the required permission's path carries the type and the action carries the verb:
 
 ```kotlin
@@ -987,7 +988,7 @@ where the service puts the loaded object in `EvaluationContext.attributes`, whos
 
 ## Security considerations
 
-- **`Authorizer` grants only the actions a role's set lists.** It grants where the requested action
+- **`Authorizer` grants only the permissions a role's set lists.** It grants where the requested permission
   appears in the set the catalogue answers, or where `"*"` does. So a set that omits an action makes
   `permits` answer `false` for it, while a catalogue answering `"*"` for an unknown name turns the
   same omission into open access.

@@ -48,27 +48,27 @@ class Authorizer(
 ) {
 
     /**
-     * Returns `true` when [principal] may perform [action] on an object sitting in [scopes].
+     * Returns `true` when [principal] may exercise [permission] on an object sitting in [scopes].
      *
      * @param principal The subject, its roles, and the delegated scope of the application acting
      *   for it.
-     * @param action An action from the catalogue's vocabulary, e.g. `"document:approve"`.
+     * @param permission A permission from the catalogue's vocabulary, e.g. `"document:approve"`.
      * @param scopes The chain the target object sits in, outermost first, for example
      *   `[Scope("organization", organizationId), Scope("project", projectId)]`. A role held at any
-     *   link in the chain grants the action, and [Scope.PLATFORM] is consulted on every call. The
+     *   link in the chain grants it, and [Scope.PLATFORM] is consulted on every call. The
      *   caller supplies the chain because the object's place in the hierarchy is known where the
      *   object is.
      */
-    fun permits(principal: Principal, action: String, scopes: List<Scope>): Boolean =
-        rolesGrant(principal, action, scopes) && scopeAllows(principal, action)
+    fun permits(principal: Principal, permission: String, scopes: List<Scope>): Boolean =
+        rolesGrant(principal, permission, scopes) && scopeAllows(principal, permission)
 
-    private fun rolesGrant(principal: Principal, action: String, scopes: List<Scope>): Boolean =
+    private fun rolesGrant(principal: Principal, permission: String, scopes: List<Scope>): Boolean =
         (scopes + Scope.PLATFORM).any { scope ->
             principal.roles[scope].orEmpty().any { role ->
-                catalog.actions(role).let { "*" in it || action in it }
+                catalog.permissions(role).let { "*" in it || permission in it }
             }
         }
 
-    private fun scopeAllows(principal: Principal, action: String): Boolean =
-        !narrowByScope || action in principal.scope
+    private fun scopeAllows(principal: Principal, permission: String): Boolean =
+        !narrowByScope || permission in principal.scope
 }
