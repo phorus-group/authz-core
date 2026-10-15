@@ -21,31 +21,31 @@ import group.phorus.authz.core.model.Scope
  * authorizer.permits(principal, "document:approve", chain)
  * ```
  *
- * [narrowByScope] adds a second condition for a deployment that issues tokens to third-party
- * integrations: the action also has to appear in [Principal.scope], which carries what the calling
+ * A second condition reads [Principal.scope], the OAuth `scope` claim carrying what the calling
  * application was granted consent to do under
- * [RFC 6749 §3.3](https://datatracker.ietf.org/doc/html/rfc6749#section-3.3). Turning it on makes
- * effective authority the intersection of the two, so an application never exceeds the subject it
- * acts for.
+ * [RFC 6749 §3.3](https://datatracker.ietf.org/doc/html/rfc6749#section-3.3). That claim is a
+ * separate thing from [Scope], the container a role is held at. Effective authority is the
+ * intersection of the two, so an application never exceeds the subject it acts for. The claim can
+ * only subtract, since the roles have to grant the permission either way.
+ *
+ * A token issued to the subject directly, with no application in between, carries
+ * [UNRESTRICTED] as its only scope value and the second condition passes. A token issued to an
+ * application carries the permissions that application was consented, in the catalogue's
+ * vocabulary. Which kind a token is therefore travels in the token, where the claim already is,
+ * rather than in a deployment-wide setting.
  *
  * ```kotlin
- * val authorizer = Authorizer(ApplicationRoles, narrowByScope = true)
+ * Principal(subjectId, roles, scope = listOf(Authorizer.UNRESTRICTED))   // a direct login
+ * Principal(subjectId, roles, scope = listOf("document:read"))           // consented to one thing
  * ```
  *
+ * An empty claim grants nothing, so a token carrying no scope is refused rather than treated as
+ * unrestricted.
+ *
  * @param catalog The role definitions for this deployment.
- * @param narrowByScope Whether [Principal.scope] is read as a second condition. That OAuth claim
- *   is a separate thing from [Scope], the container a role is held at. The claim
- *   carries two kinds of value, and which kind a token holds is a property of the authorization
- *   server rather than something a library can read off the list. OpenID Connect identity scopes
- *   such as `openid profile email` grant access to identity claims, and API scopes name actions.
- *   Matching an action against a list holding `openid` grants nothing, so a deployment states which
- *   kind it issues by setting this. Leave it at `false` where the `scope` claim carries identity
- *   scopes or nothing; set it to `true` once the authorization server issues API scopes drawn from
- *   the same action vocabulary as [RoleCatalog], such as `"report:read document:approve"`.
  */
 class Authorizer(
     private val catalog: RoleCatalog,
-    private val narrowByScope: Boolean = false,
 ) {
 
     /**
@@ -87,5 +87,17 @@ class Authorizer(
         }
 
     private fun scopeAllows(principal: Principal, permission: String): Boolean =
-        !narrowByScope || permission in principal.scope
+        UNRESTRICTED in principal.scope || permission in principal.scope
+
+    companion object {
+
+        /**
+         * The `scope` value a token carries when no application stands between the subject and the
+         * request, so the roles alone decide. One value rather than the subject's whole permission
+         * set, which keeps a token holding roles at several containers inside the 4096 bytes
+         * [RFC 6265 §6.1](https://datatracker.ietf.org/doc/html/rfc6265#section-6.1) requires a
+         * cookie to support.
+         */
+        const val UNRESTRICTED = "*"
+    }
 }

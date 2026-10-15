@@ -31,7 +31,7 @@ class AuthorizerTest {
 
     private fun principal(
         roles: Map<Scope, Set<RoleName>>,
-        scope: List<String> = emptyList(),
+        scope: List<String> = listOf(Authorizer.UNRESTRICTED),
     ) = Principal(
         subjectId = UUID.fromString(SUBJECT_ID),
         roles = roles,
@@ -139,76 +139,55 @@ class AuthorizerTest {
     }
 
     @Nested
-    @DisplayName("Delegated scope, narrowing off")
-    inner class DelegatedScopeNarrowingOff {
-        @Test
-        fun `empty scope permits an action the roles grant`() {
-            val subject = principal(mapOf(organization to setOf(ADMIN)), scope = emptyList())
-            assertTrue(authorizer.permits(subject, "report:manage", listOf(organization)))
-        }
+    @DisplayName("Delegated scope")
+    inner class DelegatedScope {
 
         @Test
-        fun `identity scope values permit an action the roles grant`() {
+        fun `the unrestricted value lets the roles decide`() {
             val subject = principal(
                 mapOf(organization to setOf(ADMIN)),
-                scope = listOf("openid", "profile", "email"),
+                scope = listOf(Authorizer.UNRESTRICTED),
             )
+
             assertTrue(authorizer.permits(subject, "report:manage", listOf(organization)))
+            assertFalse(authorizer.permits(subject, "document:publish", listOf(organization)))
         }
 
         @Test
-        fun `action outside the scope is still permitted`() {
-            val subject = principal(
-                mapOf(organization to setOf(ADMIN)),
-                scope = listOf("report:read"),
-            )
-            assertTrue(authorizer.permits(subject, "report:manage", listOf(organization)))
-        }
-    }
-
-    @Nested
-    @DisplayName("Delegated scope, narrowing on")
-    inner class DelegatedScopeNarrowingOn {
-        private val narrowing = Authorizer(catalog, narrowByScope = true)
-
-        @Test
-        fun `permits an action inside the scope`() {
+        fun `a consented permission the roles grant is permitted`() {
             val subject = principal(
                 mapOf(organization to setOf(ADMIN)),
                 scope = listOf("report:manage", "document:approve"),
             )
-            assertTrue(narrowing.permits(subject, "report:manage", listOf(organization)))
+
+            assertTrue(authorizer.permits(subject, "report:manage", listOf(organization)))
         }
 
         @Test
-        fun `refuses an action outside the scope that the roles grant`() {
+        fun `a permission the roles grant and the consent omits is refused`() {
             val subject = principal(
                 mapOf(organization to setOf(ADMIN)),
                 scope = listOf("report:read"),
             )
-            assertFalse(narrowing.permits(subject, "report:manage", listOf(organization)))
+
+            assertFalse(authorizer.permits(subject, "report:manage", listOf(organization)))
         }
 
         @Test
-        fun `empty scope refuses every action`() {
-            val subject = principal(mapOf(organization to setOf(OWNER)), scope = emptyList())
-            assertFalse(narrowing.permits(subject, "report:manage", listOf(organization)))
-        }
-
-        @Test
-        fun `scope entry matches an action exactly`() {
-            val subject = principal(mapOf(organization to setOf(OWNER)), scope = listOf("*"))
-            assertFalse(narrowing.permits(subject, "report:manage", listOf(organization)))
-            assertTrue(narrowing.permits(subject, "*", listOf(organization)))
-        }
-
-        @Test
-        fun `refuses an action in the scope that no role grants`() {
+        fun `a consented permission no role grants is refused`() {
             val subject = principal(
                 mapOf(organization to setOf(DEVELOPER)),
                 scope = listOf("document:approve"),
             )
-            assertFalse(narrowing.permits(subject, "document:approve", listOf(organization)))
+
+            assertFalse(authorizer.permits(subject, "document:approve", listOf(organization)))
+        }
+
+        @Test
+        fun `an empty claim refuses every permission`() {
+            val subject = principal(mapOf(organization to setOf(OWNER)), scope = emptyList())
+
+            assertFalse(authorizer.permits(subject, "report:manage", listOf(organization)))
         }
     }
 

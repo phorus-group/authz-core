@@ -56,8 +56,9 @@ data class Scope(val type: String, val id: String) {
  *   hold several roles at one scope and roles at several scopes at once.
  * @property scope The delegated authority of the calling application, as the OAuth `scope` claim
  *   carried it. This is a separate thing from [Scope] above, which names a container a role is
- *   held at, and the two are independent. An `Authorizer` constructed with `narrowByScope = true`
- *   reads this claim; one left at the default decides from roles alone.
+ *   held at, and the two are independent. A token issued to the subject directly carries
+ *   `Authorizer.UNRESTRICTED` here and the roles alone decide; a token issued to an application
+ *   carries what that application was consented, which narrows what the roles grant.
  */
 data class Principal(
     val subjectId: UUID,

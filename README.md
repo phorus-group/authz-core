@@ -212,15 +212,15 @@ val principal = Principal(
 ```
 
 `Principal` takes a third argument, `scope`, which holds the OAuth `scope` claim as a list of
-strings and defaults to an empty list. `Authorizer` reads it only when constructed with
-`narrowByScope = true`. The `Scope` type keying the roles map is a different type, a resource type
-with one instance of it. See [Delegated scope](#delegated-scope) for what the claim does.
+strings. A subject signing in directly carries `Authorizer.UNRESTRICTED` there and the roles alone
+decide. The `Scope` type keying the roles map is a different type, a resource type with one
+instance of it. See [Delegated scope](#delegated-scope) for what the claim does.
 
 **3. Check a permission against the scope chain the object sits in.**
 
 This step hands the catalogue from step 1 to an `Authorizer`, which runs a scoped-role check against
-it. `Authorizer` holds the catalogue and the `narrowByScope` setting, both of which outlive a
-request, so one instance serves every request. Build it at startup.
+it. `Authorizer` holds the catalogue, which outlives a request, so one instance serves every
+request. Build it at startup.
 
 The scope chain is the list of scopes the target object sits inside, outermost first. The caller
 builds it, and `permits` tries each link on its own, so the order is for the reader rather than for
@@ -730,39 +730,39 @@ the claim as it arrived, which
 delegated to the client application. It is a list of strings. The `Scope` type above is its own
 type: a resource type with one instance of it.
 
-`Authorizer` reads the claim when you construct it with `narrowByScope = true`, and it then applies
-as a second condition alongside the roles. Effective authority becomes the intersection of what the
-subject holds and what the application was granted consent to do. The default is `false`, which is
-what the `authorizer` from step 3 took.
+`Authorizer` applies the claim as a second condition alongside the roles. Effective authority is
+the intersection of what the subject holds and what the application was granted consent to do, so
+the claim can only subtract: the roles have to grant the permission either way.
+
+**Which kind of token this is travels in the token.** A request the subject makes directly, with no
+application in between, carries `Authorizer.UNRESTRICTED` as its only scope value, and the second
+condition passes. A request an application makes on the subject's behalf carries the permissions
+that application was consented, written in the catalogue's vocabulary.
 
 ```kotlin
-val narrowing = Authorizer(applicationRoles, narrowByScope = true)   // scope narrows the roles
+Principal(subjectId, roles, scope = listOf(Authorizer.UNRESTRICTED))   // signed in directly
+Principal(subjectId, roles, scope = listOf("report:read"))             // consented to one thing
 ```
 
-**Which setting to use depends on what the `scope` claim carries.** The claim carries two unrelated
-kinds of value. OpenID Connect identity scopes such as `openid profile email` grant access to
-identity claims. API scopes name permissions, as in `scope: "report:read document:approve"`. The
-list reads the same either way, so the setting states which kind the claim holds:
+One value rather than the subject's whole permission set is what keeps a token holding roles at
+several containers inside the 4096 bytes
+[RFC 6265 §6.1](https://datatracker.ietf.org/doc/html/rfc6265#section-6.1) requires a cookie to
+support.
 
-- **Leave it off** where the `scope` claim carries identity scopes or nothing. This is the default,
-  and it fits a first-party client.
-- **Turn it on** once the authorization server issues API scopes drawn from the same vocabulary as
-  the `RoleCatalog`. From then on a check grants only what the subject's roles and the delegated set
-  both allow.
+A value in the claim matches the requested permission by equality, so a delegated claim has to
+carry the permission itself. Take `permits(principal, "report:manage", chain)` where the subject's
+roles already grant `report:manage`:
 
-A value in the claim matches the requested permission by equality, so the claim has to carry the
-permission itself. An issuer of API scopes lists every permission a client may exercise, and
-`listOf("*")` in the claim matches the permission `"*"` alone, while `setOf("*")` in a catalogue
-grants every permission. Take `permits(principal, "report:manage", chain)` where the subject's roles
-already grant `report:manage`:
+| What `Principal.scope` holds | Outcome |
+|---|---|
+| `listOf(Authorizer.UNRESTRICTED)` | granted, no application stands in between |
+| `listOf("report:manage", "report:read")` | granted, the permission is listed |
+| `listOf("report:read")` | refused, the permission is outside the delegated set |
+| `listOf("openid", "profile", "email")` | refused, identity scopes name no permission |
+| `emptyList()` | refused, a claim listing nothing grants nothing |
 
-| What `Principal.scope` holds | `narrowByScope = false` | `narrowByScope = true` |
-|---|---|---|
-| `emptyList()` | granted | refused, the claim lists no permission |
-| `listOf("openid", "profile", "email")` | granted | refused, the claim lists no permission |
-| `listOf("report:manage", "report:read")` | granted | granted, the permission is listed |
-| `listOf("report:read")` | granted | refused, the permission is outside the delegated set |
-| `listOf("*")` | granted | refused, `"*"` matches the permission `"*"` alone |
+An issuer that writes identity scopes such as `openid profile email` into the claim therefore needs
+`Authorizer.UNRESTRICTED` added for a direct login, since those values name no permission.
 
 ### Permission strings
 
@@ -1225,10 +1225,10 @@ A phase list may hold more than one evaluator, and the phase runs them in the or
   so the status code carries information on its own. Reserve it for a subject with no sight of the
   object, since one who may already read it learns nothing from a 403 and is better told which
   permission they lack.
-- **Set `narrowByScope` from what the `scope` claim carries.** A value in the claim matches the
-  requested permission by equality, so turn it on only once the claim carries API scopes. Turned on
-  over identity scopes it returns `false` for every check. Left off over API scopes it gives a
-  third-party integration the subject's full authority instead of its consented share.
+- **A direct login needs `Authorizer.UNRESTRICTED` in its `scope` claim.** A value in the claim
+  matches the requested permission by equality, so a claim holding identity scopes or nothing
+  refuses every check. Minting that value from the path that issues a delegated token would give an
+  integration the subject's full authority instead of its consented share.
 - **Follow every `permitsAnywhere` with a scoped check.** It returns `true` where a subject holds a
   permission at some scope it holds a role at, which is what a route can check before the object is
   loaded. A caller holding `EDITOR@organization:A` passes it and then reaches an object in

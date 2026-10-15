@@ -51,6 +51,7 @@ class InMemoryRoleCatalogTest {
         val principal = Principal(
             subjectId = UUID.randomUUID(),
             roles = mapOf(Scope.PLATFORM to setOf(owner)),
+            scope = listOf(Authorizer.UNRESTRICTED),
         )
 
         assertEquals(true, authorizer.permits(principal, "document:approve", emptyList()))

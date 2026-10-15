@@ -38,6 +38,7 @@ class ScopedRoleEvaluatorTest {
     private fun principalHolding(role: String, at: Scope) = Principal(
         subjectId = UUID.randomUUID(),
         roles = mapOf(at to setOf(RoleName(role))),
+        scope = listOf(Authorizer.UNRESTRICTED),
     )
 
     @Test
