@@ -13,9 +13,12 @@ import kotlin.test.assertTrue
 class AuthorizationChainTest {
 
     private val testContext = EvaluationContext(
-        userId = UUID.fromString("00000000-0000-0000-0000-000000000001"),
-        permissions = listOf("report:read"),
+        principal = Principal(
+            subjectId = UUID.fromString("00000000-0000-0000-0000-000000000001"),
+            roles = emptyMap(),
+        ),
         requiredPermission = Permission.parse("report:read"),
+        permissions = listOf("report:read"),
     )
 
     /** Creates a stub evaluator that always returns the given result. */

@@ -3,7 +3,7 @@ package group.phorus.authz.core.evaluation
 import group.phorus.authz.core.model.RoleName
 
 /**
- * A [RoleCatalog] answering from definitions already in memory.
+ * A [RoleCatalog] reading definitions already in memory.
  *
  * [permissions] reads the map this was built with, so a check stays synchronous and costs a lookup.
  * Role definitions change far less often than requests arrive, which is what makes one snapshot
@@ -37,7 +37,7 @@ import group.phorus.authz.core.model.RoleName
  * the signature forbids awaiting one.
  *
  * Where a senior role absorbs a junior one, compute the transitive closure before constructing
- * this, so [permissions] answers the union as one flat set.
+ * this, so [permissions] returns the union as one flat set.
  *
  * @param definitions The permissions each role grants. The map is copied, so changes to the
  *   argument after construction leave this catalogue as it was.

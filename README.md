@@ -195,7 +195,7 @@ A `Principal` belongs to one request. Build one per request, from that request's
 held past its request leaves every later check reading the first request's subject.
 
 Each role is keyed by the scope it is held at. So one principal can hold several roles at one scope,
-and roles at several scopes at once. See [Scoped roles](#scoped-roles) for building the same map
+and roles at several scopes. See [Scoped roles](#scoped-roles) for building the same map
 from a token's `roles` claim.
 
 ```kotlin
@@ -264,7 +264,7 @@ PermissionMatcher.covers(
   covers the required action. `manage` on the organization covers `read` on a project inside it, as
   described in [Standard actions](#standard-actions) and
   [Hierarchy inheritance](#hierarchy-inheritance).
-- **In both cases**: the decision comes from state the process already holds, so both are plain
+- **In both cases**: the decision reads state the process already holds, so both are plain
   functions that return on the calling thread and do no I/O.
 
 **`manage` is matched differently by the two, and both lines below hold**, using the `principal`
@@ -284,15 +284,15 @@ from one into the other changes meaning.
 
 The `permits` call in step 3 took three arguments, and each one came from somewhere different:
 
-| Argument | Where it comes from |
+| Argument | What supplies it |
 |---|---|
 | the principal | the claims of the validated token, read once per request |
 | the permission | the endpoint's own source, since it is what that endpoint does |
 | the scope chain | the containers of the object, read from the service's own storage |
 
 **The principal arrives with the request.** Whatever validated the token leaves a subject id, a
-`roles` claim and a `scope` claim, and a per-request step of your own turns those into a
-`Principal`. See [Scoped roles](#scoped-roles) for that step.
+`roles` claim and a `scope` claim, and `Principal.fromRoleEntries` turns those into a `Principal`.
+See [Scoped roles](#scoped-roles) for that step.
 
 **The permission is a constant in the endpoint.** The route that approves a document requires
 `document:approve` whoever calls it, so the string is written in the source rather than read from
@@ -312,7 +312,7 @@ the `authorizer` you built at startup in step 3 and the `principal` you build pe
 
 ### Acting on one existing resource
 
-Where a request carries only an id, the scope chain comes from the loaded object, and `NotFound`
+Where a request carries only an id, the loaded object supplies the scope chain, and `NotFound`
 below is the service's own exception type:
 
 ```kotlin
@@ -341,7 +341,7 @@ suspend fun approve(principal: Principal, id: UUID) {
 
 **Where the service speaks HTTP, pick the status from what the subject can already see.** The check
 runs once the object is loaded, so a 403 to a subject with no sight of the object confirms that the
-id exists. A subject who may read it already knows, and 403 is the honest answer there, naming the
+id exists. A subject who may read it already knows, and 403 is honest there, naming the
 one permission they lack. The second check above is how the route tells those two apart.
 
 ### Creating a resource under a parent
@@ -411,29 +411,29 @@ load the project, read the organization from it, and pass both links as the two 
 
 ### Refusing before the database is touched
 
-Where a check runs before the object is loaded, the permission is all it has to go on. Taking the
-`authorizer` built at startup, it can check whether the subject holds that permission at any scope:
-
-```kotlin
-fun permitsAnywhere(principal: Principal, permission: String): Boolean =
-    authorizer.permits(principal, permission, principal.roles.keys.toList())
-```
-
-Passing every scope the subject holds a role at makes the check pass when any one of those roles
-grants the permission, since `permits` tries each link of the chain on its own. Treat it as a
-pre-filter on whether the subject holds the permission anywhere, and the instance check then decides
-whether it holds on this object, because that check has the object's scope chain.
+Where a check runs before the object is loaded, the permission is all it has to go on.
+`Authorizer.permitsAnywhere` returns `true` where the subject holds that permission at any scope it
+holds a role at:
 
 ```kotlin
 // POST /documents/{id}/approve
 suspend fun approve(principal: Principal, id: UUID) {
-    if (!permitsAnywhere(principal, "document:approve")) {
+    if (!authorizer.permitsAnywhere(principal, "document:approve")) {
         throw NotFound("Document $id not found")
     }
 
     // the load and the instance check from the first section follow here
 }
 ```
+
+Passing an empty chain to `permits` behaves differently. That call reads the platform scope
+alone, so it refuses a subject whose only grant is over one organization, which is the subject this
+check exists to let through.
+
+**`permitsAnywhere` is a pre-filter, and the instance check follows it.** It says the subject holds
+the permission somewhere, and the instance check then settles whether it holds on this object,
+because that check has the object's scope chain. A route that stops here lets somebody who
+administers one organization act on another's.
 
 | Argument | Where this route got it |
 |---|---|
@@ -483,8 +483,8 @@ rather than out of a token, since their number grows with the objects your subje
 
 ### Deciding from more than one source
 
-Once your service decides from roles, granted strings and a policy at once, a route hands all three
-to a chain rather than calling each in turn. `AuthorizationEvaluator` is one source of authority,
+Once your service decides from roles, granted strings and a policy together, a route passes all
+three to a chain rather than calling each in turn. `AuthorizationEvaluator` is one source of authority,
 `AuthorizationChain` holds those evaluators and runs them in a fixed order, `EvaluationContext`
 carries one check's inputs, and `evaluate` returns an `AuthZResult` whose `allowed` is the decision.
 [The evaluation chain](#the-evaluation-chain) builds the evaluators named here and sets out the
@@ -502,7 +502,8 @@ suspend fun approve(principal: Principal, id: UUID) {
     )
 
     val context = EvaluationContext(
-        userId = principal.subjectId,
+        principal = principal,
+        scopes = chain,
         permissions = grantRepository.permissionsFor(principal.subjectId),
         requiredPermission = Permission.parse(
             "organization/${document.project.organization.id}" +
@@ -511,7 +512,7 @@ suspend fun approve(principal: Principal, id: UUID) {
         attributes = mapOf("env.business_hours" to true),
     )
 
-    val result = chainFor(principal, chain).evaluate(context)
+    val result = authorizationChain.evaluate(context)
 
     if (!result.allowed) throw NotFound("Document $id not found")
 
@@ -525,9 +526,9 @@ suspend fun approve(principal: Principal, id: UUID) {
 | the `approve` action | written here, in the required permission the whole chain decides against |
 | the chain and the path | the loaded record, which names the containers once and fills both |
 
-`chainFor` is the per-request builder in [Composing a chain](#composing-a-chain). The context is
-assembled once and each evaluator the chain reaches reads the fields it cares about, so the
-record is loaded once however many sources decide from it.
+`authorizationChain` is built once, in [Composing a chain](#composing-a-chain). The context is
+assembled once per check and each evaluator the chain reaches reads the fields it cares about, so
+the record is loaded once however many sources decide from it.
 
 A rule that reads the object belongs in this position too, such as an approval having to come from
 somebody other than the person who requested it. A constraint-phase evaluator carries the same rule
@@ -584,19 +585,33 @@ Scope.parseOrNull("organization:")   // null, blank id
 Scope.parseOrNull("")                // null
 ```
 
-Given `rolesClaim` and `scopeClaim` read from the validated token as `List<String>`, call
-`parseOrNull` from `mapNotNull` in your own per-request step that builds the principal, and it skips
-a malformed entry and keeps the rest. The subject holds the roles that parsed, so a check needing a
-skipped role returns `false`. Log the entry that was skipped.
+`Principal.fromRoleEntries` does that reading. Given `rolesClaim` and `scopeClaim` read from the
+validated token as `List<String>`, it splits each entry at its `@`, parses the half after it as a
+scope, and treats a bare entry as a role held at `Scope.PLATFORM`. A malformed entry goes to
+`onDropped` and the rest are kept, so the subject holds the roles that parsed and a check needing a
+dropped role returns `false`. The handler has no default, so a caller content to lose the entry
+writes an empty lambda and states that where a reader of the call can see it:
 
 ```kotlin
-val roles: Map<Scope, Set<RoleName>> = rolesClaim
-    .mapNotNull { entry ->
-        val name = entry.substringBefore('@')
-        val scope = if ('@' in entry) Scope.parseOrNull(entry.substringAfter('@')) else Scope.PLATFORM
+val principal = Principal.fromRoleEntries(
+    subjectId = subjectId,
+    roleEntries = rolesClaim,
+    scope = scopeClaim,
+    onDropped = { entry -> log.warn("Dropping role entry \"{}\"", entry) },
+)
+```
 
-        if (name.isBlank() || scope == null) null   // skips a malformed entry
-        else scope to RoleName(name)
+An entry is dropped when its role name is blank, when the half after the `@` fails to parse as a
+`type:id` pair, or when either side of that pair is blank. `ADMIN@` is dropped, since the `@` says
+a scope was meant while an empty string arrived.
+
+Reach for `Scope.parseOrNull` directly where the roles come from somewhere other than a claim in
+this shape, such as a role assignment table:
+
+```kotlin
+val roles: Map<Scope, Set<RoleName>> = assignments
+    .mapNotNull { assignment ->
+        Scope.parseOrNull(assignment.scope)?.let { it to RoleName(assignment.role) }
     }
     .groupBy({ it.first }, { it.second })
     .mapValues { (_, names) -> names.toSet() }
@@ -949,7 +964,7 @@ ResourceSegment("*", "proj_456").covers(ResourceSegment("project", "proj_456")) 
 ### What the chain is for
 
 `Authorizer` and `PermissionMatcher` each read one source. Once your service decides from
-several sources at once, you need an order between them and a rule for which decision wins.
+more than one source, you need an order between them and a rule for which decision wins.
 `AuthorizationEvaluator` and `AuthorizationChain` supply both. The library ships the interface and the
 composition, and you write one evaluator per source of authority.
 
@@ -1002,9 +1017,9 @@ own rule:
 
 | Phase | What its evaluators are for | The rule it runs under |
 |---|---|---|
-| Granting | sources that confer authority | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase next and a `DENY` returning at once |
+| Granting | sources that confer authority | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase next and a `DENY` returning immediately |
 | Constraint | cross-cutting policies that restrict | they run in order until one returns a `DENY` result, that `DENY` replaces the `ALLOW`, and the rest never run |
-| Fallback | sources consulted when the granting phase abstained | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase for the first time and a `DENY` returning at once |
+| Fallback | sources consulted when the granting phase abstained | the first `ALLOW` or `DENY` ends it, an `ALLOW` running the constraint phase for the first time and a `DENY` returning immediately |
 | Default | every granting and fallback evaluator abstained | `DENY`, naming the required permission |
 
 **One consequence matters:** a policy in the constraint phase can refuse an `ALLOW` that a granting
@@ -1046,7 +1061,8 @@ to each evaluator it reaches. Your evaluator reads the fields it cares about and
 
 | Field | What it holds |
 |---|---|
-| `userId` | the subject's identifier, as a `UUID`; pass `Principal.subjectId` |
+| `principal` | the subject, with the roles it holds keyed by scope and the delegated scope |
+| `scopes` | the containers the target object sits inside, outermost first, which is the chain `Authorizer.permits` reads |
 | `permissions` | the permission strings the subject holds, as raw strings in the `<resource-path>:<action>` form, which is what `findMatch` searches |
 | `requiredPermission` | what the check requires, already parsed as a `Permission` |
 | `attributes` | contextual values typed `Map<String, Any?>`, keyed by a dotted name whose first part groups related values, such as `"user.region"` to `"EU"` or `"env.business_hours"` to `true` |
@@ -1055,41 +1071,38 @@ to each evaluator it reaches. Your evaluator reads the fields it cares about and
 
 An `attributes` value arrives as `Any?`, so the evaluator reading one compares or casts it as its own
 policy needs. A grant token is the string a request carries to name a grant record, and the
-fallback-phase evaluator holding the `GRANT` source looks that record up.
+fallback-phase evaluator holding the `GRANT` source looks that record up. An evaluator or an audit
+record wanting the subject's identifier alone reads `principal.subjectId`.
 
-Those six fields are the whole context. `Authorizer.permits` reads a `Principal` and a scope chain,
-which live outside it, so an evaluator deciding from roles takes both in its own constructor. A
-catalogue permission is `"${required.resourcePath.leaf.type}:${required.action}"`, since the leaf
-segment of the required permission's path carries the type and the action carries the verb:
+Everything a check varies by travels in the context, so one instance of an evaluator serves every
+request the service handles.
+
+`ScopedRoleEvaluator` is the role model written as an evaluator, and the library ships it. It takes
+an `Authorizer` and reads the subject and the scope chain from the context it is handed. A catalogue
+permission is `"${required.resourcePath.leaf.type}:${required.action}"`, since the leaf segment of
+the required permission's path carries the type and the action carries the verb:
 
 ```kotlin
-import group.phorus.authz.core.evaluation.Authorizer
-import group.phorus.authz.core.model.Principal
-import group.phorus.authz.core.model.Scope
-
-class ScopedRoleEvaluator(                  // one instance per request, it holds a Principal
+class ScopedRoleEvaluator(
     private val authorizer: Authorizer,
-    private val principal: Principal,
-    private val scopeChain: List<Scope>,
 ) : AuthorizationEvaluator {
 
-    override val source = AuthZSource.RBAC
+    override val source: AuthZSource = AuthZSource.RBAC
 
     override suspend fun evaluate(context: EvaluationContext): AuthZResult {
         val required = context.requiredPermission
-        val catalogPermission = "${required.resourcePath.leaf.type}:${required.action}"
-        val granted = authorizer.permits(principal, catalogPermission, scopeChain)
+        val permission = "${required.resourcePath.leaf.type}:${required.action}"
 
-        return if (granted) AuthZResult.allowed(source, catalogPermission)
-        else AuthZResult.abstain()
+        return if (authorizer.permits(context.principal, permission, context.scopes)) {
+            AuthZResult.allowed(source = source, matched = permission)
+        } else {
+            AuthZResult.abstain()
+        }
     }
 }
 ```
 
-**An evaluator that holds a `Principal` belongs to one request.** `AuthorizationChain` keeps the
-evaluator instances it was given, so the chain holding one is built per request. See
-[Composing a chain](#composing-a-chain) for that code. An evaluator that reads the context alone,
-such as `HeldPermissionEvaluator` above, is built once and passed to every chain.
+It abstains where the roles fall short, so a later phase can still grant.
 
 The constraint phase reads a `DENY` and carries on past any other result, so a constraint-phase
 evaluator returns a result whose decision is `DENY` or `ABSTAIN`:
@@ -1106,8 +1119,8 @@ class BusinessHoursPolicy : AuthorizationEvaluator {   // built once
 ```
 
 **Signal an authorization outcome through the return value, never by throwing.** An exception out of
-`evaluate` means infrastructure failed, such as a database that could not be reached or configuration
-that would not load. Returning `DENY` is how you refuse.
+`evaluate` means infrastructure failed, such as a database that timed out or configuration that
+broke on load. Returning `DENY` is how you refuse.
 
 An exception out of `evaluate` reaches the caller of `AuthorizationChain.evaluate` and ends the check
 there, so handle it where the chain is called.
@@ -1119,42 +1132,41 @@ there, so handle it where the chain is called.
 the fallback phase. Every parameter accepts `null` and a `null` is skipped, so a service with one
 source passes one argument.
 
-A chain holding a request-scoped evaluator is built per request, as the function below
-does with `ScopedRoleEvaluator`. In the two chain snippets `heldPermissionEvaluator` and
-`businessHoursPolicy` are instances of the two classes above, built once and held by the enclosing
-class along with the `authorizer`, while `baselineEvaluator` and `oneTimeGrantEvaluator` stand for
-evaluators of your own, one per source you decide from.
+A chain is built once and serves every request. In the two chain snippets `heldPermissionEvaluator`
+and `businessHoursPolicy` are instances of the two classes above, while `baselineEvaluator` and
+`oneTimeGrantEvaluator` stand for evaluators of your own, one per source you decide from.
 
 ```kotlin
 import group.phorus.authz.core.evaluation.AuthorizationChain
+import group.phorus.authz.core.evaluation.ScopedRoleEvaluator
 
-fun chainFor(principal: Principal, chain: List<Scope>) =
-    AuthorizationChain.standard(
-        rbac = ScopedRoleEvaluator(authorizer, principal, chain),
-        implicit = baselineEvaluator,
-        rebac = heldPermissionEvaluator,
-        abac = businessHoursPolicy,
-        grant = oneTimeGrantEvaluator,
-    )
+val authorizationChain = AuthorizationChain.standard(
+    rbac = ScopedRoleEvaluator(authorizer),
+    implicit = baselineEvaluator,
+    rebac = heldPermissionEvaluator,
+    abac = businessHoursPolicy,
+    grant = oneTimeGrantEvaluator,
+)
 ```
 
-`AuthorizationChain.evaluate` is a `suspend` function, and it takes an `EvaluationContext`. `userId`
-and `requiredPermission` are the two required arguments, `permissions`, `attributes` and `properties`
-default to empty, and `grantToken` defaults to `null`:
+`AuthorizationChain.evaluate` is a `suspend` function, and it takes an `EvaluationContext`.
+`principal` and `requiredPermission` are the two required arguments, `scopes`, `permissions`,
+`attributes` and `properties` default to empty, and `grantToken` defaults to `null`:
 
 ```kotlin
 import group.phorus.authz.core.model.EvaluationContext
 import group.phorus.authz.core.model.Permission
 
 val context = EvaluationContext(        // one per check
-    userId = principal.subjectId,
+    principal = principal,
+    scopes = listOf(Scope("organization", "org_123"), Scope("project", "proj_456")),
     permissions = listOf("organization/org_123:manage", "report:read"),
     requiredPermission = Permission.parse("organization/org_123/project/proj_456:read"),
     attributes = mapOf("env.business_hours" to true),
 )
 
 suspend fun decide(): Boolean {
-    val result = chainFor(principal, chain).evaluate(context)
+    val result = authorizationChain.evaluate(context)
 
     result.source    // which layer decided, for an audit record
     result.matched   // what granted access, or what triggered the refusal
@@ -1169,19 +1181,17 @@ For any other order, construct `AuthorizationChain` directly and fill the three 
 order you want.
 
 ```kotlin
-fun customChainFor(principal: Principal, chain: List<Scope>) =
-    AuthorizationChain(
-        grantingEvaluators = listOf(
-            ScopedRoleEvaluator(authorizer, principal, chain),
-            heldPermissionEvaluator,
-        ),
-        constraintEvaluators = listOf(businessHoursPolicy),
-        fallbackEvaluators = listOf(oneTimeGrantEvaluator),
-    )
+val customChain = AuthorizationChain(
+    grantingEvaluators = listOf(
+        ScopedRoleEvaluator(authorizer),
+        heldPermissionEvaluator,
+    ),
+    constraintEvaluators = listOf(businessHoursPolicy),
+    fallbackEvaluators = listOf(oneTimeGrantEvaluator),
+)
 ```
 
-[Writing an evaluator](#writing-an-evaluator) states which evaluators are built once and which per
-request.
+A phase list may hold more than one evaluator, and the phase runs them in the order given.
 
 ## Core types reference
 
@@ -1196,10 +1206,11 @@ request.
 | `AuthZResult` | `model` | a decision with its source, what matched, a grant id and a reason |
 | `PolicyDecision` | `model` | `ALLOW`, `DENY`, `ABSTAIN` |
 | `AuthZSource` | `model` | which layer decided: `IMPLICIT`, `RBAC`, `REBAC`, `ABAC`, `GRANT` |
-| `EvaluationContext` | `model` | one check's inputs: the subject's identifier, held permissions, required permission, attributes, grant token and extra properties |
+| `EvaluationContext` | `model` | one check's inputs: the subject, the scope chain, held permissions, required permission, attributes, grant token and extra properties |
 | `RoleCatalog` | `evaluation` | the role definitions a check reads, with one method |
 | `InMemoryRoleCatalog` | `evaluation` | a `RoleCatalog` reading a map handed to it |
 | `Authorizer` | `evaluation` | the scoped-role decision over a `Principal` and a scope chain |
+| `ScopedRoleEvaluator` | `evaluation` | the role model as an `AuthorizationEvaluator`, over an `Authorizer` |
 | `PermissionMatcher` | `evaluation` | permission-string matching with wildcards and hierarchy |
 | `AuthorizationEvaluator` | `evaluation` | one source of authority, implemented by a service |
 | `AuthorizationChain` | `evaluation` | a chain of evaluators with granting, constraint and fallback phases |
@@ -1218,13 +1229,14 @@ request.
   requested permission by equality, so turn it on only once the claim carries API scopes. Turned on
   over identity scopes it returns `false` for every check. Left off over API scopes it gives a
   third-party integration the subject's full authority instead of its consented share.
-- **Build a chain holding a `Principal` per request.** `AuthorizationChain` keeps the evaluator
-  instances it was given, for the life of the chain. So a chain cached past the request that built it
-  leaves every later check reading the first request's subject.
-- **Skip a malformed role entry and keep the rest.** `Scope.parseOrNull` returns `null`, so calling
-  it from `mapNotNull` leaves the subject holding the roles that parsed. A role entry arrives from
-  outside the process, even when it arrives signed.
-- **A catalogue edit reaches every holder of the role at once.** Changing which permissions a role
+- **Follow every `permitsAnywhere` with a scoped check.** It returns `true` where a subject holds a
+  permission at some scope it holds a role at, which is what a route can check before the object is
+  loaded. A caller holding `EDITOR@organization:A` passes it and then reaches an object in
+  organization B, so a route where it is the last check is broken access control.
+- **Drop a malformed role entry and keep the rest.** `Principal.fromRoleEntries` sends each one to
+  `onDropped`, and `Scope.parseOrNull` returns `null` for a reader of its own. A role entry arrives
+  from outside the process, even when it arrives signed.
+- **A catalogue edit reaches every holder of the role.** Changing which permissions a role
   grants applies to everybody holding that role, because the catalogue is keyed by the name alone.
 - **Removing a role from a subject takes effect when the principal is next built.** So whatever
   carries the roles bounds how long that removal takes to apply.

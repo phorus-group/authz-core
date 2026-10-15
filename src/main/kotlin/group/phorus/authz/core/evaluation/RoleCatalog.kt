@@ -33,10 +33,10 @@ interface RoleCatalog {
     /**
      * Returns the actions [role] grants.
      *
-     * An implementation has to answer the empty set for an unknown name, which the `orEmpty()` above
-     * is doing. [Authorizer] asks this for the names a principal holds at the scopes it is checking,
-     * and those names arrived from outside the process, so it is asked about unknown, misspelled and
-     * withdrawn names too. The empty set grants no action, which is what makes such a name safe.
+     * An implementation has to return the empty set for an unknown name, which the `orEmpty()`
+     * above is doing. [Authorizer] calls this for the names a principal holds at the scopes it is
+     * checking, and those names arrived from outside the process, so it is called with unknown,
+     * misspelled and withdrawn names too. The empty set grants no action, which is what makes such a name safe.
      *
      * @param role The role name taken from a role entry.
      */

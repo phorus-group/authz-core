@@ -33,11 +33,12 @@ import group.phorus.authz.core.model.Scope
  * ```
  *
  * @param catalog The role definitions for this deployment.
- * @param narrowByScope Whether [Principal.scope] is read as a second condition. The `scope` claim
+ * @param narrowByScope Whether [Principal.scope] is read as a second condition. That OAuth claim
+ *   is a separate thing from [Scope], the container a role is held at. The claim
  *   carries two kinds of value, and which kind a token holds is a property of the authorization
  *   server rather than something a library can read off the list. OpenID Connect identity scopes
  *   such as `openid profile email` grant access to identity claims, and API scopes name actions.
- *   Matching an action against a list holding `openid` answers nothing, so a deployment states which
+ *   Matching an action against a list holding `openid` grants nothing, so a deployment states which
  *   kind it issues by setting this. Leave it at `false` where the `scope` claim carries identity
  *   scopes or nothing; set it to `true` once the authorization server issues API scopes drawn from
  *   the same action vocabulary as [RoleCatalog], such as `"report:read document:approve"`.
@@ -61,6 +62,22 @@ class Authorizer(
      */
     fun permits(principal: Principal, permission: String, scopes: List<Scope>): Boolean =
         rolesGrant(principal, permission, scopes) && scopeAllows(principal, permission)
+
+    /**
+     * Returns `true` when [principal] holds [permission] at any scope it holds a role at.
+     *
+     * A check that runs before the object is loaded has no scope chain to pass, and
+     * [permits] with an empty chain consults [Scope.PLATFORM] alone. This covers the wider case a
+     * route gate needs, whether the subject holds the permission anywhere. A gate using it still
+     * needs the narrower [permits] once the object is loaded, because holding a permission
+     * somewhere leaves open whether it holds over that object.
+     *
+     * @param principal The subject, its roles, and the delegated scope of the application acting
+     *   for it.
+     * @param permission A permission from the catalogue's vocabulary, e.g. `"document:approve"`.
+     */
+    fun permitsAnywhere(principal: Principal, permission: String): Boolean =
+        principal.roles.keys.any { permits(principal, permission, listOf(it)) }
 
     private fun rolesGrant(principal: Principal, permission: String, scopes: List<Scope>): Boolean =
         (scopes + Scope.PLATFORM).any { scope ->

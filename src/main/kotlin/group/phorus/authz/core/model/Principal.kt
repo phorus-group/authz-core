@@ -54,12 +54,58 @@ data class Scope(val type: String, val id: String) {
  * @property subjectId The subject's identifier.
  * @property roles The roles the subject holds, keyed by the scope each is held at. A subject can
  *   hold several roles at one scope and roles at several scopes at once.
- * @property scope The delegated scope of the calling application, as the `scope` claim carried it.
- *   An `Authorizer` constructed with `narrowByScope = true` reads it; one left at the default
- *   ignores it.
+ * @property scope The delegated authority of the calling application, as the OAuth `scope` claim
+ *   carried it. This is a separate thing from [Scope] above, which names a container a role is
+ *   held at, and the two are independent. An `Authorizer` constructed with `narrowByScope = true`
+ *   reads this claim; one left at the default decides from roles alone.
  */
 data class Principal(
     val subjectId: UUID,
     val roles: Map<Scope, Set<RoleName>>,
     val scope: List<String> = emptyList(),
-)
+) {
+    companion object {
+        /**
+         * Builds a [Principal] from the raw values of a `roles` claim.
+         *
+         * An entry carries the scope it is held at after an `@`, as in
+         * `ADMIN@organization:org_123`, and an entry naming no scope is held at [Scope.PLATFORM].
+         *
+         * Entries arrive from outside the process, so one that is not in either shape grants
+         * nothing rather than failing the request: a blank role name, or a scope half that
+         * [Scope.parseOrNull] reads as `null`, is dropped and passed to [onDropped]. Log what
+         * arrives there.
+         *
+         * @param subjectId The subject's identifier.
+         * @param roleEntries The raw values of the `roles` claim.
+         * @param scope The delegated authority of the calling application, as the OAuth `scope` claim
+         *   carried it.
+         * @param onDropped Called once per entry that parsed to nothing. Pass an empty lambda to
+         *     accept the loss, which states the choice where a reader of the call can see it.
+         */
+        fun fromRoleEntries(
+            subjectId: UUID,
+            roleEntries: List<String>,
+            scope: List<String> = emptyList(),
+            onDropped: (String) -> Unit,
+        ): Principal {
+            val roles = roleEntries
+                .mapNotNull { entry ->
+                    val name = entry.substringBefore('@')
+                    val entryScope =
+                        if ('@' in entry) Scope.parseOrNull(entry.substringAfter('@')) else Scope.PLATFORM
+
+                    if (name.isBlank() || entryScope == null) {
+                        onDropped(entry)
+                        null
+                    } else {
+                        entryScope to RoleName(name)
+                    }
+                }
+                .groupBy({ it.first }, { it.second })
+                .mapValues { (_, names) -> names.toSet() }
+
+            return Principal(subjectId = subjectId, roles = roles, scope = scope)
+        }
+    }
+}

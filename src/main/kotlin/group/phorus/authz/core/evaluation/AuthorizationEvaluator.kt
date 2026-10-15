@@ -27,18 +27,21 @@ import group.phorus.authz.core.model.EvaluationContext
  * ### Example implementation
  *
  * ```kotlin
- * class MyEvaluator : AuthorizationEvaluator {
- *     override val source = AuthZSource.RBAC
+ * class HeldPermissionEvaluator : AuthorizationEvaluator {
+ *     override val source = AuthZSource.REBAC
  *
  *     override suspend fun evaluate(context: EvaluationContext): AuthZResult {
- *         val matched = context.permissions.firstOrNull { held ->
- *             Permission.parse(held).covers(context.requiredPermission)
- *         }
+ *         val matched = PermissionMatcher.findMatch(context.permissions, context.requiredPermission)
+ *
  *         return if (matched != null) AuthZResult.allowed(source, matched)
  *         else AuthZResult.abstain()
  *     }
  * }
  * ```
+ *
+ * [source] records which model decided, so it names the model the evaluator speaks for. The one
+ * above reads permission strings that already name their object, which is a relationship, so it
+ * reports [AuthZSource.REBAC] rather than the roles [AuthZSource.RBAC] names.
  *
  * @see AuthorizationChain
  * @see AuthZResult

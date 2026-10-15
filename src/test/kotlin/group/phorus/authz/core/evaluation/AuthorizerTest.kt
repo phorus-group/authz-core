@@ -229,6 +229,53 @@ class AuthorizerTest {
         }
     }
 
+    @Nested
+    @DisplayName("A permission held anywhere")
+    inner class HeldAnywhere {
+        @Test
+        fun `grants where the subject holds the permission at some scope`() {
+            val subject = principal(mapOf(organization to setOf(ADMIN)))
+
+            assertTrue(authorizer.permitsAnywhere(subject, "document:approve"))
+        }
+
+        @Test
+        fun `refuses where no role the subject holds grants it`() {
+            val subject = principal(mapOf(organization to setOf(DEVELOPER)))
+
+            assertFalse(authorizer.permitsAnywhere(subject, "document:approve"))
+        }
+
+        @Test
+        fun `refuses a subject holding no roles`() {
+            assertFalse(authorizer.permitsAnywhere(principal(emptyMap()), "document:approve"))
+        }
+
+        @Test
+        fun `finds it at a scope that is not the first one held`() {
+            val subject = principal(
+                mapOf(organization to setOf(DEVELOPER), project to setOf(APPROVER)),
+            )
+
+            assertTrue(authorizer.permitsAnywhere(subject, "document:approve"))
+        }
+
+        @Test
+        fun `grants where permits with an empty chain refuses, which is why it exists`() {
+            val subject = principal(mapOf(organization to setOf(ADMIN)))
+
+            assertFalse(authorizer.permits(subject, "document:approve", emptyList()))
+            assertTrue(authorizer.permitsAnywhere(subject, "document:approve"))
+        }
+
+        @Test
+        fun `a platform role grants anywhere, as it does through permits`() {
+            val subject = principal(mapOf(Scope.PLATFORM to setOf(ADMIN)))
+
+            assertTrue(authorizer.permitsAnywhere(subject, "document:approve"))
+        }
+    }
+
     companion object {
         private const val SUBJECT_ID = "00000000-0000-0000-0000-000000000001"
         private const val ORGANIZATION_ID = "org_123"

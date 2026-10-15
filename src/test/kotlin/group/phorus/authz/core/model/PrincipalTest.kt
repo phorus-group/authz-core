@@ -105,6 +105,99 @@ class PrincipalTest {
         }
     }
 
+    @Nested
+    @DisplayName("Reading role entries")
+    inner class RoleEntries {
+        private val subject = UUID.fromString(SUBJECT_ID)
+        private val organization = Scope("organization", ORGANIZATION_ID)
+
+        @Test
+        fun `reads a qualified entry into the scope it names`() {
+            val principal = Principal.fromRoleEntries(
+                subject,
+                listOf("ADMIN@organization:$ORGANIZATION_ID"),
+                onDropped = {},
+            )
+
+            assertEquals(mapOf(organization to setOf(RoleName("ADMIN"))), principal.roles)
+        }
+
+        @Test
+        fun `holds an unqualified entry at the platform scope`() {
+            val principal = Principal.fromRoleEntries(subject, listOf("OWNER"), onDropped = {})
+
+            assertEquals(mapOf(Scope.PLATFORM to setOf(RoleName("OWNER"))), principal.roles)
+        }
+
+        @Test
+        fun `groups several roles held at one scope`() {
+            val principal = Principal.fromRoleEntries(
+                subject,
+                listOf("ADMIN@organization:$ORGANIZATION_ID", "VIEWER@organization:$ORGANIZATION_ID"),
+                onDropped = {},
+            )
+
+            assertEquals(setOf(RoleName("ADMIN"), RoleName("VIEWER")), principal.roles[organization])
+        }
+
+        @Test
+        fun `carries the subject and the delegated scope across`() {
+            val principal = Principal.fromRoleEntries(
+                subject,
+                listOf("OWNER"),
+                listOf("report:read"),
+                onDropped = {},
+            )
+
+            assertEquals(subject, principal.subjectId)
+            assertEquals(listOf("report:read"), principal.scope)
+        }
+
+        @Test
+        fun `drops every malformed shape and reports each one`() {
+            val dropped = mutableListOf<String>()
+            val malformed = listOf(
+                "ADMIN@",
+                "@organization:$ORGANIZATION_ID",
+                "@",
+                "ADMIN@organization",
+                "ADMIN@:$ORGANIZATION_ID",
+                "ADMIN@organization:",
+                "",
+            )
+
+            val principal = Principal.fromRoleEntries(subject, malformed, onDropped = dropped::add)
+
+            assertTrue(principal.roles.isEmpty())
+            assertEquals(malformed, dropped)
+        }
+
+        @Test
+        fun `keeps the entries that parse when one beside them is malformed`() {
+            val dropped = mutableListOf<String>()
+
+            val principal = Principal.fromRoleEntries(
+                subject,
+                listOf("ADMIN@", "VIEWER@organization:$ORGANIZATION_ID"),
+                onDropped = dropped::add,
+            )
+
+            assertEquals(mapOf(organization to setOf(RoleName("VIEWER"))), principal.roles)
+            assertEquals(listOf("ADMIN@"), dropped)
+        }
+
+        @Test
+        fun `an id may itself contain a colon`() {
+            val principal = Principal.fromRoleEntries(
+                subject,
+                listOf("ADMIN@organization:a:b"),
+                onDropped = {},
+            )
+
+            assertEquals(mapOf(Scope("organization", "a:b") to setOf(RoleName("ADMIN"))), principal.roles)
+        }
+    }
+
     companion object {
         private const val SUBJECT_ID = "00000000-0000-0000-0000-000000000001"
         private const val ORGANIZATION_ID = "org_123"

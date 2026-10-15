@@ -41,7 +41,7 @@ import group.phorus.authz.core.model.PolicyDecision
  * @property grantingEvaluators Evaluators that can grant access (RBAC, Implicit, ReBAC).
  *   Evaluated in order; first ALLOW wins.
  * @property constraintEvaluators Evaluators that can deny access even after a grant (ABAC).
- *   Evaluated in order until one answers DENY, and that DENY overrides the grant.
+ *   Evaluated in order until one returns DENY, and that DENY overrides the grant.
  * @property fallbackEvaluators Evaluators checked only when no granting evaluator allowed (Grant).
  *   Evaluated in order; first ALLOW wins.
  */

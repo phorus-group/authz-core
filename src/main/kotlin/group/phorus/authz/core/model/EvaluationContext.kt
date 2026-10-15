@@ -1,6 +1,5 @@
 package group.phorus.authz.core.model
 
-import java.util.UUID
 
 /**
  * All the information an [AuthorizationEvaluator][group.phorus.authz.core.evaluation.AuthorizationEvaluator]
@@ -11,11 +10,17 @@ import java.util.UUID
  *
  * ### Example
  *
+ * Carrying the subject here is what lets one chain serve every request. An evaluator reads
+ * [principal] off the context rather than holding one, so the chain can be built once at startup.
+ *
+ * ### Example
+ *
  * ```kotlin
  * val context = EvaluationContext(
- *     userId = UUID.fromString("7f3a9c1e-0b4d-4e26-91a8-2c5f6d0a7b31"),
- *     permissions = listOf("organization/org_123:manage", "report:read"),
+ *     principal = principal,
  *     requiredPermission = Permission.parse("organization/org_123/project/proj_456:read"),
+ *     scopes = listOf(Scope("organization", "org_123"), Scope("project", "proj_456")),
+ *     permissions = listOf("organization/org_123:manage", "report:read"),
  *     attributes = mapOf(
  *         "user.region" to "EU",
  *         "resource.tags" to listOf("gdpr"),
@@ -24,10 +29,12 @@ import java.util.UUID
  * )
  * ```
  *
- * @property userId The authenticated user's identifier.
+ * @property principal The subject the request acts for, its scoped roles, and the delegated scope.
+ * @property requiredPermission The permission needed to perform the requested action.
+ * @property scopes The chain the target object sits in, outermost first, which a scoped-role
+ *   evaluator reads. Empty where the check runs before the object is known.
  * @property permissions The permission strings the subject holds, in the
  *   `<resource-path>:<action>` form [Permission] parses.
- * @property requiredPermission The permission needed to perform the requested action.
  * @property attributes A flat map of contextual attributes for ABAC evaluation. Keys follow the
  *   convention `category.name` (e.g., `"user.region"`, `"resource.tags"`, `"env.time"`).
  * @property grantToken The raw grant token string from the `X-Grant-Token` header, if present.
@@ -35,9 +42,10 @@ import java.util.UUID
  *   custom JWT claims).
  */
 data class EvaluationContext(
-    val userId: UUID,
-    val permissions: List<String> = emptyList(),
+    val principal: Principal,
     val requiredPermission: Permission,
+    val scopes: List<Scope> = emptyList(),
+    val permissions: List<String> = emptyList(),
     val attributes: Map<String, Any?> = emptyMap(),
     val grantToken: String? = null,
     val properties: Map<String, String> = emptyMap(),
