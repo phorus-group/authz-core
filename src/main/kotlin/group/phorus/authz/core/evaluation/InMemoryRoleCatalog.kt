@@ -46,5 +46,14 @@ class InMemoryRoleCatalog(definitions: Map<RoleName, Set<String>>) : RoleCatalog
 
     private val definitions: Map<RoleName, Set<String>> = definitions.toMap()
 
+    init {
+        val unreadable = RoleCatalog.unreadableWildcards(definitions.values.flatten())
+        require(unreadable.isEmpty()) {
+            "These role entries hold a `*` that is part of a name, so each grants the one " +
+                "permission it spells: ${unreadable.joinToString(", ")}. Write `*` as the whole " +
+                "entry, as the whole type or as the whole action."
+        }
+    }
+
     override fun permissions(role: RoleName): Set<String> = definitions[role].orEmpty()
 }

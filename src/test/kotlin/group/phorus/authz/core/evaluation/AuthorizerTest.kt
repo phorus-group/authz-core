@@ -19,6 +19,9 @@ class AuthorizerTest {
             DEVELOPER to setOf("report:read", "document:create", "document:publish"),
             APPROVER to setOf("document:approve", "document:read"),
             EDITOR to setOf("document:*"),
+            AUDITOR to setOf("*:read"),
+            EVERYTHING to setOf("*:*"),
+            OPERATOR to setOf("backoffice"),
         )
 
         override fun permissions(role: RoleName): Set<String> = definitions[role].orEmpty()
@@ -178,6 +181,49 @@ class AuthorizerTest {
     }
 
     @Nested
+    @DisplayName("Catalogue entry beginning with a star")
+    inner class ActionWildcardCatalogueEntry {
+        private val auditor = principal(mapOf(organization to setOf(AUDITOR)))
+
+        @Test
+        fun `an entry naming an action for every type grants it on each of them`() {
+            assertTrue(authorizer.permits(auditor, "document:read", listOf(organization)))
+            assertTrue(authorizer.permits(auditor, "report:read", listOf(organization)))
+            assertTrue(authorizer.permits(auditor, "anything-added-later:read", listOf(organization)))
+        }
+
+        @Test
+        fun `it grants the action it spells and leaves the others`() {
+            assertFalse(authorizer.permits(auditor, "document:approve", listOf(organization)))
+            assertFalse(authorizer.permits(auditor, "report:delete", listOf(organization)))
+        }
+
+        @Test
+        fun `it refuses an action whose name ends with the one it opens`() {
+            assertFalse(authorizer.permits(auditor, "document:unread", listOf(organization)))
+        }
+
+        @Test
+        fun `it refuses a permission naming an action and no type`() {
+            assertFalse(authorizer.permits(auditor, ":read", listOf(organization)))
+        }
+
+        @Test
+        fun `an entry starred in both halves grants every permission`() {
+            val everything = principal(mapOf(organization to setOf(EVERYTHING)))
+            assertTrue(authorizer.permits(everything, "document:approve", listOf(organization)))
+            assertTrue(authorizer.permits(everything, "report:delete", listOf(organization)))
+        }
+
+        @Test
+        fun `an entry holding no colon grants the permission it spells`() {
+            val operator = principal(mapOf(organization to setOf(OPERATOR)))
+            assertTrue(authorizer.permits(operator, "backoffice", listOf(organization)))
+            assertFalse(authorizer.permits(operator, "backoffice:read", listOf(organization)))
+        }
+    }
+
+    @Nested
     @DisplayName("Delegated scope")
     inner class DelegatedScope {
 
@@ -305,5 +351,8 @@ class AuthorizerTest {
         private val EDITOR = RoleName("EDITOR")
         private val DEVELOPER = RoleName("DEVELOPER")
         private val APPROVER = RoleName("APPROVER")
+        private val AUDITOR = RoleName("AUDITOR")
+        private val EVERYTHING = RoleName("EVERYTHING")
+        private val OPERATOR = RoleName("OPERATOR")
     }
 }

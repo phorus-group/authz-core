@@ -14,7 +14,7 @@ plugins {
 
 group = "group.phorus"
 description = "Scoped RBAC and permission matching for Kotlin/JVM services."
-version = "1.0.3"
+version = "1.0.4"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17

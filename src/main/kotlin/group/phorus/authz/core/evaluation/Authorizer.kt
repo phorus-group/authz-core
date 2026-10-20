@@ -10,8 +10,9 @@ import group.phorus.authz.core.model.Scope
  * subject may act when any held role grants the action, which is core RBAC as standardised in
  * ANSI INCITS 359-2004, where a session's permissions are the union over its activated roles.
  *
- * A role grants an action by naming it. [UNRESTRICTED] instead grants every permission, and an
- * entry ending in `:*` grants every action on the type before the colon.
+ * A role grants an action by naming it. [UNRESTRICTED] instead grants every permission, and a `*`
+ * in either half of an entry stands for every value of that half, so `document:*` grants every
+ * action on documents and `*:read` grants reading every type.
  *
  * ```kotlin
  * val authorizer = Authorizer(ApplicationRoles)
@@ -90,18 +91,25 @@ class Authorizer(
         }
 
     /**
-     * Whether one catalogue entry grants [required]. [UNRESTRICTED] grants every permission, an
-     * entry ending in `:*` grants every action on the type before the colon, and every other
-     * entry grants itself.
+     * Whether one catalogue entry grants [required]. [UNRESTRICTED] grants every permission, a
+     * `*` in either half of an entry stands for every value of that half, and every other entry
+     * grants itself.
      */
-    private fun grants(granted: String, required: String): Boolean = when {
-        granted == UNRESTRICTED -> true
-        granted == required -> true
-        granted.endsWith(TYPE_WILDCARD_SUFFIX) -> {
-            val type = granted.dropLast(1)
-            required.startsWith(type) && required.length > type.length
-        }
-        else -> false
+    private fun grants(granted: String, required: String): Boolean {
+        if (granted == UNRESTRICTED || granted == required) return true
+
+        val (grantedType, grantedAction) = halves(granted) ?: return false
+        val (requiredType, requiredAction) = halves(required) ?: return false
+
+        return (grantedType == UNRESTRICTED || grantedType == requiredType) &&
+            (grantedAction == UNRESTRICTED || grantedAction == requiredAction)
+    }
+
+    /** The type and the action either side of the last `:`, where [permission] names both. */
+    private fun halves(permission: String): Pair<String, String>? {
+        val colon = permission.lastIndexOf(':')
+        if (colon <= 0 || colon == permission.length - 1) return null
+        return permission.substring(0, colon) to permission.substring(colon + 1)
     }
 
     private fun scopeAllows(principal: Principal, permission: String): Boolean =
@@ -117,8 +125,5 @@ class Authorizer(
          * cookie to support.
          */
         const val UNRESTRICTED = "*"
-
-        /** What an entry granting every action on one type ends with, as in `document:*`. */
-        private const val TYPE_WILDCARD_SUFFIX = ":*"
     }
 }

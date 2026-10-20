@@ -6,6 +6,8 @@ import group.phorus.authz.core.model.Scope
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class InMemoryRoleCatalogTest {
 
@@ -55,5 +57,47 @@ class InMemoryRoleCatalogTest {
         )
 
         assertEquals(true, authorizer.permits(principal, "document:approve", emptyList()))
+    }
+
+    @Test
+    fun `refuses an entry whose star belongs to a name`() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            InMemoryRoleCatalog(mapOf(owner to setOf("organization/*:read", "doc*:read")))
+        }
+
+        assertTrue(error.message.orEmpty().contains("organization/*:read"), error.message.orEmpty())
+        assertTrue(error.message.orEmpty().contains("doc*:read"), error.message.orEmpty())
+    }
+
+    @Test
+    fun `accepts the three places a star stands for every value`() {
+        val catalog = InMemoryRoleCatalog(
+            mapOf(owner to setOf("*", "document:*", "*:read", "*:*", "document:read")),
+        )
+
+        assertEquals(5, catalog.permissions(owner).size)
+    }
+
+    @Test
+    fun `names every entry a catalogue reads as a name rather than as breadth`() {
+        val reported = RoleCatalog.unreadableWildcards(
+            listOf(
+                "*", "*:*", "*:read", "document:*", "document:read", "backoffice",
+                "organization/*:read", "doc*:read", "document:re*d", "*report:read", "doc*",
+            ),
+        )
+
+        assertEquals(
+            listOf("*report:read", "doc*", "doc*:read", "document:re*d", "organization/*:read"),
+            reported,
+        )
+    }
+
+    @Test
+    fun `reports one entry once however many roles hold it`() {
+        assertEquals(
+            listOf("doc*:read"),
+            RoleCatalog.unreadableWildcards(listOf("doc*:read", "doc*:read", "document:read")),
+        )
     }
 }

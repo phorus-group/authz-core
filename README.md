@@ -105,7 +105,7 @@ Either one works on its own, and a service can compose both.
 | What the subject carries | one scoped role per role and scope | one string per object per action |
 | How that set grows | with the number of places it holds a role | with the number of objects reachable |
 | When removing authority takes effect | when a service next builds the principal | when the strings are next supplied |
-| How breadth works | a role at an outer scope grants at inner ones, and an entry ending in `:*` grants every action on a type | a path prefix covers everything under it |
+| How breadth works | a role at an outer scope grants at inner ones, and a `*` in either half of an entry stands for every value of that half | a path prefix covers everything under it |
 | What the calling code has to know | where the object sits | the required permission alone |
 | Entry point | `Authorizer.permits` | `PermissionMatcher.covers` |
 
@@ -186,9 +186,10 @@ val applicationRoles = InMemoryRoleCatalog(
 
 A catalogue permission matches a requested one when the two are equal, and the colon in
 `document:approve` is convention here. A name of your own works as well as these. `"*"` instead
-grants every permission, and an entry ending in `:*` grants every action on the type before the
-colon, so `project:*` grants `project:read` and `project:archive` alike. Every other entry grants
-the action it spells. See [Wildcards](#wildcards) for what `*` means in each place it appears.
+grants every permission, and a `*` in either half stands for every value of that half, so
+`project:*` grants `project:read` and `project:archive` alike while `*:read` grants `project:read`
+and `document:read`. Every other entry grants the action it spells. See
+[Wildcards](#wildcards) for what `*` means in each place it appears.
 
 **2. Build a principal for the subject the request acts for.**
 
@@ -693,8 +694,27 @@ holds it.
 | What the catalogue returns for a name | What a subject holding that role may do |
 |---|---|
 | `setOf("report:read", "project:read")` | exactly those two permissions |
+| `setOf("project:*")` | every action on `project` |
+| `setOf("*:read")` | the action `read` on every type |
 | `setOf("*")` | every permission |
 | the empty set | nothing |
+
+**A `*` stands for every value of the half it occupies, so it occupies a whole half.** `project:*`
+and `*:read` are read as breadth, and a `*` sharing its half with a name belongs to that name:
+`doc*:read` grants the action `read` on a type called `doc*`, and a path copied from a permission
+string, such as `organization/*:read`, grants `read` on a type called `organization/*`. Each
+grants the one permission it spells while reading as breadth.
+`RoleCatalog.unreadableWildcards` returns those entries, `InMemoryRoleCatalog` refuses them on
+construction, and a catalogue of your own calls it where definitions enter the process:
+
+```kotlin
+fun reload() {
+    val definitions = readDefinitions()
+    val unreadable = RoleCatalog.unreadableWildcards(definitions.values.flatten())
+    require(unreadable.isEmpty()) { "These role entries grant one permission each: $unreadable" }
+    catalog = InMemoryRoleCatalog(definitions)
+}
+```
 
 **Return the empty set for an unknown name.** `Authorizer` reads the catalogue for the names a
 principal holds at the scopes being checked, and those names arrived from outside the process, so
@@ -981,7 +1001,8 @@ appears, so a string carrying one changes meaning when it is copied between a `R
 | the action, as `report:*` | any action on a path it covers |
 | a whole permission string, as `*` | every permission, read as `*:*` |
 | a `RoleCatalog` set, as `setOf("*")` | every permission |
-| a permission inside a `RoleCatalog` set, as `project:*` | every action on `project` |
+| the action of a `RoleCatalog` entry, as `project:*` | every action on `project` |
+| the type of a `RoleCatalog` entry, as `*:read` | the action `read` on every type |
 | the `scope` claim, as `listOf("*")` | the permission `"*"` alone |
 | `Scope.PLATFORM`, which is `Scope("platform", "*")` | a literal id, compared by equality like any other |
 
