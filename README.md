@@ -32,6 +32,7 @@ For the JWT creation and validation behind the claims a check reads, see
   - [Listing what sits in a container](#listing-what-sits-in-a-container)
   - [Refusing before the database is touched](#refusing-before-the-database-is-touched)
   - [Authority granted on one named object](#authority-granted-on-one-named-object)
+  - [Handing out a role](#handing-out-a-role)
   - [Deciding from more than one source](#deciding-from-more-than-one-source)
 - [Core concepts](#core-concepts)
   - [Scoped roles](#scoped-roles)
@@ -104,7 +105,7 @@ Either one works on its own, and a service can compose both.
 | What the subject carries | one scoped role per role and scope | one string per object per action |
 | How that set grows | with the number of places it holds a role | with the number of objects reachable |
 | When removing authority takes effect | when a service next builds the principal | when the strings are next supplied |
-| How breadth works | a role at an outer scope grants at inner ones | a path prefix covers everything under it |
+| How breadth works | a role at an outer scope grants at inner ones, and an entry ending in `:*` grants every action on a type | a path prefix covers everything under it |
 | What the calling code has to know | where the object sits | the required permission alone |
 | Entry point | `Authorizer.permits` | `PermissionMatcher.covers` |
 
@@ -183,11 +184,11 @@ val applicationRoles = InMemoryRoleCatalog(
 )
 ```
 
-A catalogue permission is compared as a whole string, so two match only when they are equal, and the
-colon in `document:approve` is convention here. A name of your own works as well as these. The entry
-`"*"` is the one exception, and a role whose set holds it grants everything. The entry `project:*`
-grants nothing unless a check requests the literal permission `project:*`, because it is compared
-whole like any other. See [Wildcards](#wildcards) for what `*` means in each place it appears.
+A catalogue permission matches a requested one when the two are equal, and the colon in
+`document:approve` is convention here. A name of your own works as well as these. `"*"` instead
+grants every permission, and an entry ending in `:*` grants every action on the type before the
+colon, so `project:*` grants `project:read` and `project:archive` alike. Every other entry grants
+the action it spells. See [Wildcards](#wildcards) for what `*` means in each place it appears.
 
 **2. Build a principal for the subject the request acts for.**
 
@@ -251,9 +252,9 @@ the permission a subject was granted is broad enough for the one a check require
 import group.phorus.authz.core.evaluation.PermissionMatcher
 
 PermissionMatcher.covers(
-    granted = "organization/org_123:manage",
+    granted = "organization/org_123:read",
     required = "organization/org_123/project/proj_456:read",
-)   // true: manage covers read, and the organization path covers the project inside it
+)   // true: the organization path covers the project inside it
 ```
 
 **What you get:**
@@ -261,24 +262,24 @@ PermissionMatcher.covers(
 - **From `permits`**: `true` here. The `ADMIN` role above is held at the organization, the chain
   names that organization, and `document:approve` is in that role's set.
 - **From `covers`**: `true` when the granted path covers the required path and the granted action
-  covers the required action. `manage` on the organization covers `read` on a project inside it, as
-  described in [Standard actions](#standard-actions) and
-  [Hierarchy inheritance](#hierarchy-inheritance).
+  covers the required action. `read` on the organization covers `read` on a project inside it, as
+  described in [Hierarchy inheritance](#hierarchy-inheritance).
 - **In both cases**: the decision reads state the process already holds, so both are plain
   functions that return on the calling thread and do no I/O.
 
-**`manage` is matched differently by the two, and both lines below hold**, using the `principal`
-from step 2 and the `authorizer` and `chain` from step 3.
+**An action means the same thing to both**, using the `principal` from step 2 and the `authorizer`
+and `chain` from step 3.
 
 ```kotlin
 authorizer.permits(principal, "report:read", chain)   // false, ADMIN holds report:manage
-PermissionMatcher.covers(granted = "report:manage", required = "report:read")   // true
+PermissionMatcher.covers(granted = "report:manage", required = "report:read")   // false
 ```
 
-A catalogue permission is compared whole, so `manage` there grants the permission spelled
-`report:manage` and nothing else. In a permission string `manage` covers every action on that path
-and on the paths under it, which [Standard actions](#standard-actions) sets out. A string copied
-from one into the other changes meaning.
+An action matches by name in each, so `report:manage` grants and covers `report:manage`. `*` is the
+one action that matches every other, granting every action on the type in a catalogue and covering
+every action on the path in a permission string. The resource half still differs between the two: a
+catalogue entry names a type and the scope chain says which object, while a permission string names
+the object itself and therefore covers the paths under it.
 
 ## How it works
 
@@ -480,6 +481,37 @@ The resource path carries where the object sits, which is the job the scope chai
 sections above. A grant recorded on the organization reaches this document through
 [hierarchy inheritance](#hierarchy-inheritance). Read the held strings from storage on each check
 rather than out of a token, since their number grows with the objects your subject can reach.
+
+### Handing out a role
+
+A service that lets one subject grant a role to another needs the rule that nobody hands out more
+than they hold. Ask `permits` for each permission the role grants, against the chain the grant is
+being made on:
+
+```kotlin
+// PUT /organizations/{organizationId}/members/{userId}/role
+suspend fun setMemberRole(principal: Principal, organizationId: UUID, userId: UUID, role: RoleName) {
+    val chain = listOf(Scope("organization", organizationId.toString()))
+
+    val missing = applicationRoles.permissions(role)
+        .filterNot { authorizer.permits(principal, it, chain) }
+
+    if (missing.isNotEmpty()) throw Forbidden("Granting $role would hand out $missing")
+
+    memberRepository.setRole(organizationId, userId, role)
+}
+```
+
+| Argument | Where this route got it |
+|---|---|
+| `principal` | the request's token |
+| `chain` | the organization named in the path, which is where the grant is being made |
+| the role's permissions | the same catalogue the checks read |
+
+**Read the granter's authority at the chain the grant is made on.** Building the set out of
+`permitsAnywhere` instead asks whether they hold each permission at *any* scope they hold a role
+at, so somebody who owns organization A passes the guard for a grant they are making in
+organization B.
 
 ### Deciding from more than one source
 
@@ -772,15 +804,16 @@ A permission string is `<resource-path>:<action>`.
 
 ```
 organization/org_123:read                       one organization, one action
-organization/org_123/project/proj_456:manage    one project, every action on it and under it
+organization/org_123/project/proj_456:*         one project, every action on it and under it
 report:create                                   the report type, so every report, one action
 *:*                                             any path, any action
+*                                               the same, written the way a role spells it
 ```
 
 The last `:` separates the path from the action, so a colon anywhere inside a permission string
-belongs to the resource path. `Permission.parse` reads that form, and it throws
-`IllegalArgumentException` for a blank string, for one with no `:`, and for one whose last `:` sits at
-either end. Where a string reached the process from outside, catch it.
+belongs to the resource path. `Permission.parse` reads that form and the bare `*`, and it throws
+`IllegalArgumentException` for a blank string, for any other string with no `:`, and for one whose
+last `:` sits at either end. Where a string reached the process from outside, catch it.
 
 `Permission.parse` is the only reader and it throws, so that exception is how a malformed string
 arrives. `anyCovers` and `findMatch`, the two [matcher](#matching-rules) calls that search a list of
@@ -800,24 +833,24 @@ to one and the action `b` to the other. Each value is read by the call belonging
 
 #### Standard actions
 
-Only `manage` and `*` carry matching behaviour in code. Every other action name matches by exact
-string, so a name of your own works like `create`, `read`, `list`, `update` and `delete`, which are
-the names the library documents.
+Only `*` carries matching behaviour in code. Every other action name matches by exact string, so a
+name of your own works like `create`, `read`, `list`, `update` and `delete`, which are the names
+the library documents. Write `:*` as the action where one entry should reach every action.
 
-| Action | What it means | How it matches |
+| Written | What it means | How it matches |
 |---|---|---|
 | `create` | create a new resource | by exact string |
 | `read` | read a single resource | by exact string |
 | `list` | list resources | by exact string |
 | `update` | modify an existing resource | by exact string |
 | `delete` | remove a resource | by exact string |
-| `manage` | full control | covers every required action on a path it covers |
-| `*` | any action | covers every required action on a path it covers |
+| `:*` | full control over the resource the permission names | covers every required action on a path it covers |
+| `*` | full control over every path, the whole string | reads as `*:*` and covers every permission |
 
-**`manage` and `*` carry that behaviour in a permission string only.** A `RoleCatalog` set holds
-permissions compared whole, so `report:manage` in a catalogue grants the permission `report:manage`
-and refuses a `report:read` check, while `PermissionMatcher.covers("report:manage", "report:read")`
-returns `true`. The [quick start](#quick-start) shows both lines side by side after step 4.
+**`*` is the only action that reaches another.** `report:*` grants every action on the type in a
+catalogue and covers every action on the path in a permission string. Every other action, whether
+one of the five above or one of your own, matches the action it spells. The
+[quick start](#quick-start) shows both sides of that after step 4.
 
 #### Matching rules
 
@@ -825,19 +858,19 @@ returns `true`. The [quick start](#quick-start) shows both lines side by side af
 |------|---------|----------|--------|
 | Exact match | `report:read` | `report:read` | covers |
 | Wildcard action | `report:*` | `report:delete` | covers |
-| Manage action | `report:manage` | `report:read` | covers |
 | Wildcard instance | `organization/*:read` | `organization/org_123:read` | covers |
 | Type level | `organization:read` | `organization/org_123:read` | covers |
 | Superadmin | `*:*` | `document/doc_789:delete` | covers |
-| Hierarchy | `organization/org_123:manage` | `organization/org_123/project/proj_456:read` | covers |
+| Superadmin, bare | `*` | `document/doc_789:delete` | covers |
+| Hierarchy | `organization/org_123:read` | `organization/org_123/project/proj_456:read` | covers |
 | Narrower action | `report:read` | `report:delete` | does not cover |
-| Narrower path | `organization/org_123/project/proj_456:manage` | `organization/org_123:read` | does not cover |
+| Narrower path | `organization/org_123/project/proj_456:*` | `organization/org_123:read` | does not cover |
 
 **`PermissionMatcher` holds the matching calls**, and it takes either raw strings or parsed
 `Permission` objects. `anyCovers` and `findMatch` search a list the subject holds:
 
 ```kotlin
-val held = listOf("organization/org_123:manage", "report:read", "report:list")
+val held = listOf("organization/org_123:*", "report:read", "report:list")
 
 PermissionMatcher.anyCovers(held, "organization/org_123/project/proj_456:read")   // true
 PermissionMatcher.findMatch(held, "report:read")                                 // "report:read"
@@ -854,9 +887,9 @@ required one, so a permission at a broader path covers everything under it. The 
 on the resource hierarchies of GCP IAM and Azure RBAC:
 
 ```
-organization/org_123:manage
+organization/org_123:*
   covers  organization/org_123/project/proj_456:read
-  covers  organization/org_123/project/proj_456:manage
+  covers  organization/org_123/project/proj_456:update
   covers  organization/org_123/project/proj_456/document/doc_789:approve
 ```
 
@@ -946,8 +979,9 @@ appears, so a string carrying one changes meaning when it is copied between a `R
 | the instance in a path, as `organization/*:read` | any instance of that type |
 | the type in a path, as `*:read` | any type |
 | the action, as `report:*` | any action on a path it covers |
+| a whole permission string, as `*` | every permission, read as `*:*` |
 | a `RoleCatalog` set, as `setOf("*")` | every permission |
-| a permission inside a `RoleCatalog` set, as `project:*` | the permission written `project:*`, compared whole |
+| a permission inside a `RoleCatalog` set, as `project:*` | every action on `project` |
 | the `scope` claim, as `listOf("*")` | the permission `"*"` alone |
 | `Scope.PLATFORM`, which is `Scope("platform", "*")` | a literal id, compared by equality like any other |
 
@@ -1160,7 +1194,7 @@ import group.phorus.authz.core.model.Permission
 val context = EvaluationContext(        // one per check
     principal = principal,
     scopes = listOf(Scope("organization", "org_123"), Scope("project", "proj_456")),
-    permissions = listOf("organization/org_123:manage", "report:read"),
+    permissions = listOf("organization/org_123:*", "report:read"),
     requiredPermission = Permission.parse("organization/org_123/project/proj_456:read"),
     attributes = mapOf("env.business_hours" to true),
 )
@@ -1229,6 +1263,10 @@ A phase list may hold more than one evaluator, and the phase runs them in the or
   matches the requested permission by equality, so a claim holding identity scopes or nothing
   refuses every check. Minting that value from the path that issues a delegated token would give an
   integration the subject's full authority instead of its consented share.
+- **Check a granter's authority with `permits` at the chain the grant is made on.** A rule that
+  refuses to hand out a role carrying more than the granter holds is the standard guard against
+  escalation through delegated administration, and writing it with `permitsAnywhere` passes
+  authority held at one container for a grant made at another.
 - **Follow every `permitsAnywhere` with a scoped check.** It returns `true` where a subject holds a
   permission at some scope it holds a role at, which is what a route can check before the object is
   loaded. A caller holding `EDITOR@organization:A` passes it and then reaches an object in

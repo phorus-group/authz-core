@@ -12,11 +12,10 @@ import group.phorus.authz.core.model.Permission
  *
  * 1. **Exact match**: `report:read` covers `report:read`.
  * 2. **Wildcard action**: `report:*` covers `report:read`, `report:update`, etc.
- * 3. **Manage action**: `report:manage` covers all actions on `report`.
- * 4. **Wildcard instance**: an instance id of `*` covers every instance of that type.
- * 5. **Hierarchy inheritance**: `organization/org_123:manage` covers
+ * 3. **Wildcard instance**: an instance id of `*` covers every instance of that type.
+ * 4. **Hierarchy inheritance**: `organization/org_123:read` covers
  *    `organization/org_123/project/proj_456:read` (parent cascades to children).
- * 6. **Superadmin**: `*:*` covers everything.
+ * 5. **Superadmin**: `*:*` covers everything, and the bare `*` reads as `*:*`.
  *
  * ### Examples
  *
@@ -30,7 +29,7 @@ import group.phorus.authz.core.model.Permission
  * matcher.covers("*:read", "organization/org_123:read")  // true
  *
  * // Hierarchy inheritance
- * matcher.covers("organization/org_123:manage", "organization/org_123/project/proj_456:read")  // true
+ * matcher.covers("organization/org_123:read", "organization/org_123/project/proj_456:read")  // true
  *
  * // Superadmin
  * matcher.covers("*:*", "document/doc_789:delete")  // true

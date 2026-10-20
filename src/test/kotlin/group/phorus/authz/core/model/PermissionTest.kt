@@ -94,10 +94,10 @@ class PermissionTest {
         }
 
         @Test
-        fun `manage action covers any action`() {
-            assertTrue(Permission.parse("report:manage").covers(Permission.parse("report:read")))
-            assertTrue(Permission.parse("report:manage").covers(Permission.parse("report:delete")))
-            assertTrue(Permission.parse("report:manage").covers(Permission.parse("report:create")))
+        fun `manage is an action name and covers no other action`() {
+            assertFalse(Permission.parse("report:manage").covers(Permission.parse("report:read")))
+            assertFalse(Permission.parse("report:manage").covers(Permission.parse("report:delete")))
+            assertTrue(Permission.parse("report:manage").covers(Permission.parse("report:manage")))
         }
 
         @Test
@@ -143,9 +143,9 @@ class PermissionTest {
     @DisplayName("Covers: hierarchy inheritance")
     inner class HierarchyInheritance {
         @Test
-        fun `parent manage covers child read`() {
+        fun `parent covers child for the same action`() {
             assertTrue(
-                Permission.parse("organization/org_123:manage")
+                Permission.parse("organization/org_123:read")
                     .covers(Permission.parse("organization/org_123/project/proj_456:read"))
             )
         }
@@ -169,7 +169,7 @@ class PermissionTest {
         @Test
         fun `grandparent covers grandchild`() {
             assertTrue(
-                Permission.parse("organization/org_123:manage")
+                Permission.parse("organization/org_123:*")
                     .covers(Permission.parse("organization/org_123/project/proj_456/document/doc_789:read"))
             )
         }
@@ -197,6 +197,23 @@ class PermissionTest {
                 "organization/org_123:read",
                 Permission.parse("organization/org_123:read").toString()
             )
+        }
+    }
+
+    @Nested
+    @DisplayName("Full control")
+    inner class FullControl {
+
+        @Test
+        fun `a bare wildcard is the whole permission`() {
+            assertEquals(Permission.parse("*:*"), Permission.parse("*"))
+            assertEquals("*:*", Permission.parse("*").raw)
+        }
+
+        @Test
+        fun `a bare wildcard covers every permission`() {
+            assertTrue(Permission.parse("*").covers(Permission.parse("document/doc_7:delete")))
+            assertTrue(Permission.parse("*").covers(Permission.parse("report:read")))
         }
     }
 }

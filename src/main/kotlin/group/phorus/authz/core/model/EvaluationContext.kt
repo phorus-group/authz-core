@@ -20,7 +20,7 @@ package group.phorus.authz.core.model
  *     principal = principal,
  *     requiredPermission = Permission.parse("organization/org_123/project/proj_456:read"),
  *     scopes = listOf(Scope("organization", "org_123"), Scope("project", "proj_456")),
- *     permissions = listOf("organization/org_123:manage", "report:read"),
+ *     permissions = listOf("organization/org_123:*", "report:read"),
  *     attributes = mapOf(
  *         "user.region" to "EU",
  *         "resource.tags" to listOf("gdpr"),

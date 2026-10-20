@@ -18,6 +18,7 @@ class AuthorizerTest {
             ADMIN to setOf("project:manage", "report:manage", "document:approve"),
             DEVELOPER to setOf("report:read", "document:create", "document:publish"),
             APPROVER to setOf("document:approve", "document:read"),
+            EDITOR to setOf("document:*"),
         )
 
         override fun permissions(role: RoleName): Set<String> = definitions[role].orEmpty()
@@ -135,6 +136,44 @@ class AuthorizerTest {
         fun `definition without star refuses the star action`() {
             val subject = principal(mapOf(organization to setOf(ADMIN)))
             assertFalse(authorizer.permits(subject, "*", listOf(organization)))
+        }
+    }
+
+    @Nested
+    @DisplayName("Catalogue entry ending in a star")
+    inner class TypeWildcardCatalogueEntry {
+        private val editor = principal(mapOf(organization to setOf(EDITOR)))
+
+        @Test
+        fun `an entry ending in a wildcard grants every action on that type`() {
+            assertTrue(authorizer.permits(editor, "document:read", listOf(organization)))
+            assertTrue(authorizer.permits(editor, "document:approve", listOf(organization)))
+            assertTrue(authorizer.permits(editor, "document:anything-added-later", listOf(organization)))
+        }
+
+        @Test
+        fun `it grants the star action on the type it names`() {
+            assertTrue(authorizer.permits(editor, "document:*", listOf(organization)))
+        }
+
+        @Test
+        fun `a wildcard reaches its own type and no other`() {
+            assertFalse(authorizer.permits(editor, "report:read", listOf(organization)))
+            assertFalse(authorizer.permits(editor, "documentary:read", listOf(organization)))
+            assertFalse(authorizer.permits(editor, "document:", listOf(organization)))
+        }
+
+        @Test
+        fun `the scope chain still decides where it applies`() {
+            val elsewhere = principal(mapOf(otherProject to setOf(EDITOR)))
+            assertFalse(authorizer.permits(elsewhere, "document:approve", listOf(organization)))
+        }
+
+        @Test
+        fun `an entry spelling an action grants that action alone`() {
+            val admin = principal(mapOf(organization to setOf(ADMIN)))
+            assertTrue(authorizer.permits(admin, "project:manage", listOf(organization)))
+            assertFalse(authorizer.permits(admin, "project:read", listOf(organization)))
         }
     }
 
@@ -263,6 +302,7 @@ class AuthorizerTest {
 
         private val OWNER = RoleName("OWNER")
         private val ADMIN = RoleName("ADMIN")
+        private val EDITOR = RoleName("EDITOR")
         private val DEVELOPER = RoleName("DEVELOPER")
         private val APPROVER = RoleName("APPROVER")
     }

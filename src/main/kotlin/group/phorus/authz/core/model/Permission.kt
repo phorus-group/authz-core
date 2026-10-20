@@ -15,15 +15,15 @@ package group.phorus.authz.core.model
  *
  * ### Standard actions
  *
- * | Action | Meaning |
- * |--------|---------|
+ * | Written | Meaning |
+ * |---------|---------|
  * | `create` | Create a new resource |
  * | `read` | Read a single resource |
  * | `list` | List resources |
  * | `update` | Modify an existing resource |
  * | `delete` | Remove a resource |
- * | `manage` | Full control (implies all other actions) |
- * | `*` | Wildcard, matches any action |
+ * | `:*` | Full control over the resource the permission names, as in `report:*` |
+ * | `*` | Full control over every path, the whole string, equal to `*:*` |
  *
  * ### Examples
  *
@@ -33,13 +33,14 @@ package group.phorus.authz.core.model
  * Permission.parse("organization/org_123/project/proj_456:update")            // nested
  * // Wildcard: Permission(resourcePath=["organization","*"], action="read")
  * Permission.parse("*:*")                                                     // superadmin
+ * Permission.parse("*")                                                       // the same, as a role spells it
  * ```
  *
  * ### Matching rules
  *
  * A permission **covers** another when:
  * 1. Its [resourcePath] covers the other's resource path (exact match, wildcard, or ancestor), **and**
- * 2. Its [action] covers the other's action (`*` or `manage` covers everything, exact match otherwise).
+ * 2. Its [action] covers the other's action (`*` covers every action, exact match otherwise).
  *
  * @property resourcePath The hierarchical resource location.
  * @property action The operation being performed or permitted.
@@ -59,9 +60,9 @@ data class Permission(
      * grants access to everything the narrower one does, and possibly more.
      *
      * ```kotlin
-     * val broad = Permission.parse("organization/org_123:manage")
+     * val broad = Permission.parse("organization/org_123:*")
      * val narrow = Permission.parse("organization/org_123/project/proj_456:read")
-     * broad.covers(narrow)  // true: manage on parent covers read on child
+     * broad.covers(narrow)  // true: every action on the parent covers read on the child
      * narrow.covers(broad)  // false
      * ```
      */
@@ -76,19 +77,25 @@ data class Permission(
         /** The wildcard token that matches any action. */
         const val WILDCARD_ACTION = "*"
 
-        /** The `manage` action implies all other actions on the same resource. */
-        const val MANAGE_ACTION = "manage"
-
         /**
          * Parses a raw permission string into a [Permission].
          *
-         * The string must contain exactly one `:` separating the resource path from the action.
+         * The string carries a `:` separating the resource path from the action, or is the bare
+         * `*` that a role catalogue spells full control with, which reads as `*:*`.
          *
          * @param raw The permission string, e.g. `"organization/org_123:read"`.
          * @throws IllegalArgumentException if the format is invalid.
          */
         fun parse(raw: String): Permission {
             require(raw.isNotBlank()) { "Permission string must not be blank" }
+
+            // A role catalogue spells full control `*`, so the same string reads here as `*:*`.
+            if (raw == WILDCARD_ACTION) {
+                return Permission(
+                    resourcePath = ResourcePath.parse(WILDCARD_ACTION),
+                    action = WILDCARD_ACTION,
+                )
+            }
 
             val colonIndex = raw.lastIndexOf(':')
             require(colonIndex > 0 && colonIndex < raw.length - 1) {
@@ -107,12 +114,11 @@ data class Permission(
         /**
          * Returns `true` if [granted] action covers [required] action.
          *
-         * - `*` covers everything.
-         * - `manage` covers everything (full control).
+         * - `*` covers every action.
          * - Otherwise, exact string match.
          */
         fun actionCovers(granted: String, required: String): Boolean = when (granted) {
-            WILDCARD_ACTION, MANAGE_ACTION -> true
+            WILDCARD_ACTION -> true
             else -> granted == required
         }
     }

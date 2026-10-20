@@ -10,6 +10,9 @@ import group.phorus.authz.core.model.Scope
  * subject may act when any held role grants the action, which is core RBAC as standardised in
  * ANSI INCITS 359-2004, where a session's permissions are the union over its activated roles.
  *
+ * A role grants an action by naming it. [UNRESTRICTED] instead grants every permission, and an
+ * entry ending in `:*` grants every action on the type before the colon.
+ *
  * ```kotlin
  * val authorizer = Authorizer(ApplicationRoles)
  *
@@ -82,9 +85,24 @@ class Authorizer(
     private fun rolesGrant(principal: Principal, permission: String, scopes: List<Scope>): Boolean =
         (scopes + Scope.PLATFORM).any { scope ->
             principal.roles[scope].orEmpty().any { role ->
-                catalog.permissions(role).let { "*" in it || permission in it }
+                catalog.permissions(role).any { granted -> grants(granted, permission) }
             }
         }
+
+    /**
+     * Whether one catalogue entry grants [required]. [UNRESTRICTED] grants every permission, an
+     * entry ending in `:*` grants every action on the type before the colon, and every other
+     * entry grants itself.
+     */
+    private fun grants(granted: String, required: String): Boolean = when {
+        granted == UNRESTRICTED -> true
+        granted == required -> true
+        granted.endsWith(TYPE_WILDCARD_SUFFIX) -> {
+            val type = granted.dropLast(1)
+            required.startsWith(type) && required.length > type.length
+        }
+        else -> false
+    }
 
     private fun scopeAllows(principal: Principal, permission: String): Boolean =
         UNRESTRICTED in principal.scope || permission in principal.scope
@@ -99,5 +117,8 @@ class Authorizer(
          * cookie to support.
          */
         const val UNRESTRICTED = "*"
+
+        /** What an entry granting every action on one type ends with, as in `document:*`. */
+        private const val TYPE_WILDCARD_SUFFIX = ":*"
     }
 }

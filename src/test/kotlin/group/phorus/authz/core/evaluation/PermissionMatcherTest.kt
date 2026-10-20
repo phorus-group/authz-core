@@ -25,14 +25,14 @@ class PermissionMatcherTest {
         }
 
         @Test
-        fun `manage action`() {
-            assertTrue(PermissionMatcher.covers("organization/org_123:manage", "organization/org_123:read"))
+        fun `manage action covers no other action`() {
+            assertFalse(PermissionMatcher.covers("organization/org_123:manage", "organization/org_123:read"))
         }
 
         @Test
         fun `hierarchy inheritance`() {
             assertTrue(PermissionMatcher.covers(
-                "organization/org_123:manage",
+                "organization/org_123:read",
                 "organization/org_123/project/proj_456:read"
             ))
         }
@@ -58,7 +58,7 @@ class PermissionMatcherTest {
     @DisplayName("findMatch")
     inner class FindMatch {
         private val userPermissions = listOf(
-            "organization/org_123:manage",
+            "organization/org_123:*",
             "report:read",
             "report:list",
         )
@@ -71,7 +71,7 @@ class PermissionMatcherTest {
         @Test
         fun `finds via hierarchy`() {
             assertEquals(
-                "organization/org_123:manage",
+                "organization/org_123:*",
                 PermissionMatcher.findMatch(userPermissions, "organization/org_123/project/proj_456:read")
             )
         }
@@ -104,6 +104,37 @@ class PermissionMatcherTest {
         @Test
         fun `returns false for empty list`() {
             assertFalse(PermissionMatcher.anyCovers(emptyList(), "report:read"))
+        }
+    }
+
+    @Nested
+    @DisplayName("The matching rules the README publishes")
+    inner class DocumentedRules {
+
+        /**
+         * One case per row of the README's matching-rules table. A row that stops holding is a
+         * README that has drifted from the code, which reading either on its own cannot catch.
+         */
+        @Test
+        fun `every published row holds`() {
+            val rows = listOf(
+                Triple("report:read", "report:read", true),
+                Triple("report:*", "report:delete", true),
+                Triple("report:manage", "report:read", false),
+                Triple("organization/*:read", "organization/org_123:read", true),
+                Triple("organization:read", "organization/org_123:read", true),
+                Triple("*:*", "document/doc_789:delete", true),
+                Triple("*", "document/doc_789:delete", true),
+                Triple("organization/org_123:read", "organization/org_123/project/proj_456:read", true),
+                Triple("report:read", "report:delete", false),
+                Triple("organization/org_123/project/proj_456:*", "organization/org_123:read", false),
+            )
+
+            val wrong = rows.filter { (granted, required, documented) ->
+                PermissionMatcher.covers(granted, required) != documented
+            }
+
+            assertEquals(emptyList(), wrong, "these rows no longer match the code")
         }
     }
 }
